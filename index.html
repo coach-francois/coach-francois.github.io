@@ -598,33 +598,54 @@ render();
 </script>
 
 <div id="gate" style="position:fixed;inset:0;z-index:9999;background:linear-gradient(135deg,#0b3d6e,#1478c8);display:flex;align-items:center;justify-content:center;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
-  <div style="background:#fff;border-radius:16px;padding:34px 38px;max-width:380px;text-align:center;box-shadow:0 24px 70px rgba(0,0,0,.35)">
+  <div style="background:#fff;border-radius:16px;padding:34px 38px;max-width:390px;text-align:center;box-shadow:0 24px 70px rgba(0,0,0,.35)">
     <div style="font-size:34px">🏊</div>
     <h2 style="margin:10px 0 4px;color:#1a2332;font-size:19px">Nageurs de l'Ain</h2>
-    <p style="color:#64748b;font-size:13px;margin:0 0 18px">Accès réservé — entrez le code d'accès</p>
+    <p style="color:#64748b;font-size:13px;margin:0 0 18px">Accès réservé — entrez votre code d'accès personnel</p>
     <form id="gateForm">
       <input id="gateCode" type="password" autocomplete="off" placeholder="Code d'accès"
         style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:9px;padding:10px 12px;font-size:15px;text-align:center;letter-spacing:2px">
-      <button type="submit" style="margin-top:12px;width:100%;border:0;background:#0f5fa8;color:#fff;border-radius:9px;padding:10px;font-size:14px;font-weight:600;cursor:pointer">Entrer</button>
-      <div id="gateMsg" style="color:#b91c1c;font-size:12.5px;height:16px;margin-top:8px"></div>
+      <button id="gateBtn" type="submit" style="margin-top:12px;width:100%;border:0;background:#0f5fa8;color:#fff;border-radius:9px;padding:10px;font-size:14px;font-weight:600;cursor:pointer">Entrer</button>
+      <div id="gateMsg" style="color:#b91c1c;font-size:12.5px;min-height:16px;margin-top:8px"></div>
     </form>
   </div>
 </div>
 <script>
 (function(){
-  var HASH = "b6089e588cd7da6edf1ca85a86dd22a26b5b493091ff5cfd951548b4cd4c6cce";
+  var HASH = "b6089e588cd7da6edf1ca85a86dd22a26b5b493091ff5cfd951548b4cd4c6cce"; /* code maître du coach */
+  var WORKER = "https://super-math-ffn-perfs.francois-debutnocode.workers.dev/";
   async function sha256(s){
     var b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
     return Array.from(new Uint8Array(b)).map(function(x){return x.toString(16).padStart(2,"0");}).join("");
   }
-  document.getElementById("gateForm").addEventListener("submit", async function(e){
+  async function tryCode(v){
+    /* 1) code maître (coach) */
+    try { if ((await sha256(v)) === HASH) return {ok:true}; }
+    catch(e) { if (v && btoa(v) === "QUlOMjAyNg==") return {ok:true}; }
+    /* 2) code personnel, vérifié auprès du serveur de gestion du coach */
+    try {
+      var r = await fetch(WORKER + "consult?code=" + encodeURIComponent(v));
+      var d = await r.json();
+      if (d.ok && d.viewer && (d.viewer.tabs || []).indexOf("ain") >= 0) return {ok:true, nom:d.viewer.nom};
+      if (d.ok) return {ok:false, msg:"Ce code n'ouvre pas la Base Ain (accès non attribué)."};
+      return {ok:false, msg:"Code d'accès invalide ou révoqué."};
+    } catch(e) { return {ok:false, msg:"Vérification impossible — vérifiez votre connexion internet."}; }
+  }
+  async function submit(v){
+    var btn = document.getElementById("gateBtn"), msg = document.getElementById("gateMsg");
+    btn.disabled = true; btn.textContent = "Vérification…"; msg.textContent = "";
+    var res = await tryCode((v || "").trim());
+    if (res.ok) { document.getElementById("gate").remove(); }
+    else { msg.textContent = res.msg || "Code incorrect"; document.getElementById("gateCode").value = "";
+           btn.disabled = false; btn.textContent = "Entrer"; }
+  }
+  document.getElementById("gateForm").addEventListener("submit", function(e){
     e.preventDefault();
-    var v = document.getElementById("gateCode").value.trim();
-    var ok = false;
-    try { ok = (await sha256(v)) === HASH; } catch(err) { ok = v.length > 0 && btoa(v) === "QUlOMjAyNg=="; }
-    if (ok) { document.getElementById("gate").remove(); }
-    else { document.getElementById("gateMsg").textContent = "Code incorrect"; document.getElementById("gateCode").value = ""; }
+    submit(document.getElementById("gateCode").value);
   });
+  /* lien personnalisé : https://coach-francois.github.io/#code=XXXX */
+  var mh = (location.hash || "").match(/[#&]code=([^&]+)/);
+  if (mh) { document.getElementById("gateCode").value = decodeURIComponent(mh[1]); submit(decodeURIComponent(mh[1])); }
 })();
 </script>
 
