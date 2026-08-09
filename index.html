@@ -612,7 +612,7 @@ render();
 </div>
 <script>
 (function(){
-  var HASH = "b6089e588cd7da6edf1ca85a86dd22a26b5b493091ff5cfd951548b4cd4c6cce"; /* code maître du coach */
+  var HASH = "aab6b8daea87ba8d863468edb506a5708c839da1ec3265cec87cd92847360f7c"; /* empreinte du code maître */
   var WORKER = "https://super-math-ffn-perfs.francois-debutnocode.workers.dev/";
   async function sha256(s){
     var b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -620,8 +620,7 @@ render();
   }
   async function tryCode(v){
     /* 1) code maître (coach) */
-    try { if ((await sha256(v)) === HASH) return {ok:true}; }
-    catch(e) { if (v && btoa(v) === "QUlOMjAyNg==") return {ok:true}; }
+    try { if ((await sha256(v)) === HASH) return {ok:true}; } catch(e) {}
     /* 2) code personnel, vérifié auprès du serveur de gestion du coach */
     try {
       var r = await fetch(WORKER + "consult?code=" + encodeURIComponent(v));
