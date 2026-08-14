@@ -127,6 +127,12 @@ footer{margin-top:22px;font-size:11.5px;color:var(--muted);line-height:1.6}
     <div class="fgroup"><div class="lab">Clubs</div><div class="dd" id="fClubs"></div></div>
     <div class="fgroup"><div class="lab">Compétitions</div><div class="dd" id="fMeets"></div></div>
     <div class="fgroup"><div class="lab">Nageur</div><input type="text" id="fName" placeholder="Rechercher un nom…"></div>
+    <div class="fgroup"><div class="lab">Points</div>
+      <div style="display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--muted)">
+        de <input type="number" id="pMin" placeholder="min" min="0" max="1600" style="width:64px;padding:4px 6px">
+        à <input type="number" id="pMax" placeholder="max" min="0" max="1600" style="width:64px;padding:4px 6px">
+      </div>
+    </div>
     <div class="fgroup"><div class="lab">Période</div>
       <div style="display:flex;gap:6px;align-items:center;font-size:12.5px;color:var(--muted)">
         du <input type="date" id="fFrom" style="padding:5px 7px"> au <input type="date" id="fTo" style="padding:5px 7px">
@@ -141,6 +147,7 @@ footer{margin-top:22px;font-size:11.5px;color:var(--muted);line-height:1.6}
       <button data-v="event" class="on">Classement par épreuve</button>
       <button data-v="swimmer">Top nageurs (1 ligne / nageur)</button>
       <button data-v="cumul">Cumul de points</button>
+      <button data-v="team" id="btnTeamView">🏁 Équipes &amp; relais</button>
     </div>
     <span class="count" id="count"></span>
   </div>
@@ -199,7 +206,12 @@ function defaultState(){
     showChrono: true,
     tmin: "",
     tmax: "",
+    pmin: "",
+    pmax: "",
     view: "event",
+    teamMode: "relay",
+    relayCfg: {stroke: "FREE", legs: 4, dist: 50, comp: "F"},
+    teamCfg: {preset: "u11", sex: "F"},
     sort: {key:"pts", dir:-1},
   };
 }
@@ -361,6 +373,11 @@ function buildFilters(){
   const fn = document.getElementById("fName");
   fn.value = state.name;
   fn.oninput = () => { state.name = fn.value; render(); };
+  // fourchette de points
+  const pn = document.getElementById("pMin"), px = document.getElementById("pMax");
+  pn.value = state.pmin; px.value = state.pmax;
+  pn.oninput = () => { state.pmin = pn.value; render(); };
+  px.oninput = () => { state.pmax = px.value; render(); };
   // période du/au
   const ff = document.getElementById("fFrom"), ft = document.getElementById("fTo");
   ff.value = state.from; ft.value = state.to;
@@ -396,6 +413,8 @@ function filteredResults(){
       if (tn !== null && r[R.TIME] < tn) return false;
       if (tx !== null && r[R.TIME] > tx) return false;
     }
+    if (state.pmin !== "" && r[R.PTS] < +state.pmin) return false;
+    if (state.pmax !== "" && r[R.PTS] > +state.pmax) return false;
     if (state.course !== "ALL" && (state.course === "SCM") !== (r[R.COURSE] === 0)) return false;
     if (state.sex.size && !state.sex.has(w[2])) return false;
     if (state.cats.size && !state.cats.has(catOf(w[3]))) return false;
@@ -530,7 +549,351 @@ function renderCumul(){
   window._cumul = {evKeys, rows};
 }
 
+/* ---------- Équipes & relais ---------- */
+const PRESETS = {
+  u11:  {label: "Interclubs U11 (4 nageurs)", size: 4, maxRaces: 2, cap: 2,
+         ind: [[50,3],[50,1],[50,2],[50,0],[100,4]],
+         relays: [{legs:4, dist:50, stroke:"FREE"},{legs:4, dist:50, stroke:"MEDLEY"}]},
+  u13:  {label: "Interclubs U13 (4 nageurs)", size: 4, maxRaces: 2, cap: 1,
+         ind: [[100,3],[100,1],[100,2],[100,0]],
+         relays: [{legs:4, dist:50, stroke:"FREE"},{legs:4, dist:100, stroke:"MEDLEY_IND"}]},
+  plew: {label: "Coupe Plewinski (8 nageurs : 4 F + 4 G, U11 et moins)", custom: "plew"},
+  tc:   {label: "Interclubs TC (10 nageurs)", size: 10, maxRaces: 2, cap: 2,
+         ind: [[100,0],[200,0],[400,0],[100,1],[200,1],[100,2],[200,2],[100,3],[200,3],[200,4]],
+         relays: [{legs:10, dist:50, stroke:"FREE"},{legs:4, dist:100, stroke:"MEDLEY"}]},
+  cdep: {label: "Coupe des Départements (10 nageurs)", size: 10, maxRaces: 2, cap: 1,
+         ind: [[50,3],[50,1],[50,2],[200,0],[200,3],[200,1],[200,2],[200,4],[400,0],[400,4]],
+         relays: [{legs:10, dist:50, stroke:"FREE"},{legs:4, dist:50, stroke:"MEDLEY"}]},
+};
+const LEGS_4N = [1, 2, 3, 0]; // ordre relais 4 nages : Dos, Brasse, Papillon, NL
+
+// pool : meilleure perf (points & temps) par nageur × épreuve, selon les filtres généraux
+// (hors filtres nages/distances/épreuves/sexe, gérés par le composeur lui-même)
+function teamPool(){
+  const s = S(), q = norm(state.name.trim());
+  const [s0, s1] = seasonRange(state.season, state.mode);
+  const best = new Map(); // sw|dist|stroke -> {t: minTime, p: maxPts, tr, pr}
+  for (const r of s.results) {
+    const w = s.swimmers[r[R.SW]];
+    const md = s.meets[r[R.MEET]][4];
+    if (md < s0 || md > s1) continue;
+    if (!state.relays && r[R.RELAY]) continue;
+    if (state.course !== "ALL" && (state.course === "SCM") !== (r[R.COURSE] === 0)) continue;
+    if (state.cats.size && !state.cats.has(catOf(w[3]))) continue;
+    if (state.years.size && !state.years.has(w[3])) continue;
+    if (state.clubs.size && !state.clubs.has(w[4])) continue;
+    if (state.from && md < state.from) continue;
+    if (state.to && md > state.to) continue;
+    if (q && !norm(w[0] + " " + w[1]).includes(q)) continue;
+    const k = r[R.SW] + "|" + r[R.DIST] + "|" + r[R.STROKE];
+    const c = best.get(k) || {t: Infinity, p: -1};
+    if (r[R.TIME] < c.t) c.t = r[R.TIME];
+    if (r[R.PTS] > c.p) c.p = r[R.PTS];
+    best.set(k, c);
+  }
+  return best;
+}
+function poolGet(pool, sw, dist, stroke){ return pool.get(sw + "|" + dist + "|" + stroke); }
+function eligibleSwimmers(sexe){
+  const s = S();
+  return s.swimmers.map((w, i) => ({i, w})).filter(x => sexe === "X" || x.w[2] === sexe);
+}
+// meilleur relais : renvoie {legs:[{sw,stroke,dist,time}], total} ou null
+function bestRelay(pool, cands, cfg, exclude){
+  const s = S();
+  const excl = exclude || new Set();
+  if (cfg.stroke === "FREE") {
+    const list = cands.map(x => ({sw: x.i, t: (poolGet(pool, x.i, cfg.dist, 0) || {}).t}))
+      .filter(x => x.t && !excl.has(x.sw)).sort((a,b) => a.t - b.t);
+    let pick;
+    if (cfg.comp === "X") {
+      const F = list.filter(x => s.swimmers[x.sw][2] === "F").slice(0, cfg.legs/2);
+      const M = list.filter(x => s.swimmers[x.sw][2] === "M").slice(0, cfg.legs/2);
+      if (F.length < cfg.legs/2 || M.length < cfg.legs/2) return null;
+      pick = F.concat(M).sort((a,b) => a.t - b.t);
+    } else {
+      if (list.length < cfg.legs) return null;
+      pick = list.slice(0, cfg.legs);
+    }
+    return {legs: pick.map(x => ({sw: x.sw, stroke: 0, dist: cfg.dist, time: x.t})),
+            total: pick.reduce((a,x) => a + x.t, 0)};
+  }
+  // relais 4 nages : affectation optimale (force brute sur les 8 meilleurs par nage)
+  const perLeg = LEGS_4N.map(st => cands.map(x => ({sw: x.i, st, t: (poolGet(pool, x.i, cfg.dist, st) || {}).t}))
+    .filter(x => x.t && !excl.has(x.sw)).sort((a,b) => a.t - b.t).slice(0, 8));
+  if (perLeg.some(l => !l.length)) return null;
+  let bestA = null;
+  const rec = (li, used, acc, legs) => {
+    if (bestA && acc >= bestA.total) return;
+    if (li === 4) { bestA = {legs: [...legs], total: acc}; return; }
+    for (const c of perLeg[li]) {
+      if (used.has(c.sw)) continue;
+      if (cfg.comp === "X") { /* mixte : équilibre vérifié en fin */ }
+      used.add(c.sw); legs.push({sw: c.sw, stroke: c.st, dist: cfg.dist, time: c.t});
+      const sF = legs.filter(l => s.swimmers[l.sw][2] === "F").length;
+      const need = cfg.comp === "X" ? (sF <= 2 && (legs.length - sF) <= 2) : true;
+      if (need) rec(li + 1, used, acc + c.t, legs);
+      used.delete(c.sw); legs.pop();
+    }
+  };
+  rec(0, new Set(), 0, []);
+  return bestA;
+}
+// équipe compétition : slots (épreuves ind avec capacité) -> affectation max points
+function bestTeam(pool, cands, preset){
+  const events = preset.ind.map(([d, st]) => ({d, st}));
+  const totalSlots = preset.size * preset.maxRaces;
+  const races = new Map(), assign = [];
+  const team = new Set();
+  const capUsed = events.map(() => 0);
+  const score = (sw, ev) => { const g = poolGet(pool, sw, ev.d, ev.st); return g ? g.p : -1; };
+  // 1) couvrir chaque épreuve
+  const order = events.map((e, i) => i).sort((a,b) => {
+    const bestB = Math.max(...cands.map(c => score(c.i, events[b])));
+    const bestA2 = Math.max(...cands.map(c => score(c.i, events[a])));
+    return bestB - bestA2; });
+  const canTake = sw => (races.get(sw) || 0) < preset.maxRaces && (team.has(sw) || team.size < preset.size);
+  for (const ei of order) {
+    const ev = events[ei];
+    const c = cands.filter(x => canTake(x.i) && score(x.i, ev) >= 0)
+      .sort((a,b) => score(b.i, ev) - score(a.i, ev))[0];
+    if (!c) continue;
+    assign.push({ei, sw: c.i, pts: score(c.i, ev)});
+    races.set(c.i, (races.get(c.i) || 0) + 1); team.add(c.i); capUsed[ei]++;
+  }
+  // 2) compléter jusqu'au quota avec les meilleurs (épreuve, nageur) restants
+  let guard = 0;
+  while (assign.length < totalSlots && guard++ < 500) {
+    let bestPair = null;
+    for (let ei = 0; ei < events.length; ei++) {
+      if (capUsed[ei] >= preset.cap) continue;
+      for (const c of cands) {
+        if (!canTake(c.i)) continue;
+        if (assign.some(a => a.ei === ei && a.sw === c.i)) continue;
+        const p = score(c.i, events[ei]);
+        if (p >= 0 && (!bestPair || p > bestPair.pts)) bestPair = {ei, sw: c.i, pts: p};
+      }
+    }
+    if (!bestPair) break;
+    assign.push(bestPair);
+    races.set(bestPair.sw, (races.get(bestPair.sw) || 0) + 1); team.add(bestPair.sw); capUsed[bestPair.ei]++;
+  }
+  // 3) passes d'amélioration : remplacer une affectation si un nageur fait mieux
+  for (let pass = 0; pass < 3; pass++) {
+    for (const a of assign) {
+      for (const c of cands) {
+        if (c.i === a.sw) continue;
+        const p = score(c.i, events[a.ei]);
+        if (p <= a.pts) continue;
+        const cnt = races.get(c.i) || 0;
+        const okTeam = team.has(c.i) || team.size < preset.size || (races.get(a.sw) === 1 && !assign.some(x => x !== a && x.sw === a.sw));
+        if (cnt < preset.maxRaces && okTeam && !assign.some(x => x.ei === a.ei && x.sw === c.i)) {
+          races.set(a.sw, races.get(a.sw) - 1);
+          if (races.get(a.sw) === 0) team.delete(a.sw);
+          a.sw = c.i; a.pts = p;
+          races.set(c.i, cnt + 1); team.add(c.i);
+        }
+      }
+    }
+  }
+  return {assign, events, team, total: assign.reduce((s2, a) => s2 + a.pts, 0)};
+}
+function swName(i){ const w = S().swimmers[i]; return "<b>" + w[0] + "</b> " + w[1]; }
+/* ---- Coupe Plewinski : règlement officiel ---- */
+const PLEW_STROKES = [3, 1, 2, 0]; // Pap, Dos, Brasse, NL (100 m)
+function plewBestQuartet(pool, cands){
+  // meilleur quatuor d'un sexe : Σ (100 4N + nage affectée), 1 nageur par nage
+  const scored = cands.map(x => {
+    const p4 = (poolGet(pool, x.i, 100, 4) || {}).p || 0;
+    const st = PLEW_STROKES.map(s2 => (poolGet(pool, x.i, 100, s2) || {}).p || 0);
+    return {i: x.i, p4, st, best: p4 + Math.max(...st)};
+  }).sort((a,b) => b.best - a.best).slice(0, 10);
+  if (scored.length < 4) return null;
+  let bestSel = null;
+  const idx = scored.map((_, k) => k);
+  const combos = [];
+  const rec = (start, acc) => { if (acc.length === 4) { combos.push([...acc]); return; }
+    for (let k = start; k < idx.length; k++) { acc.push(k); rec(k+1, acc); acc.pop(); } };
+  rec(0, []);
+  const perms = [[0,1,2,3],[0,1,3,2],[0,2,1,3],[0,2,3,1],[0,3,1,2],[0,3,2,1],[1,0,2,3],[1,0,3,2],[1,2,0,3],[1,2,3,0],[1,3,0,2],[1,3,2,0],[2,0,1,3],[2,0,3,1],[2,1,0,3],[2,1,3,0],[2,3,0,1],[2,3,1,0],[3,0,1,2],[3,0,2,1],[3,1,0,2],[3,1,2,0],[3,2,0,1],[3,2,1,0]];
+  for (const c of combos) for (const p of perms) {
+    let tot = 0;
+    for (let l = 0; l < 4; l++) tot += scored[c[l]].p4 + scored[c[l]].st[p[l]];
+    if (!bestSel || tot > bestSel.tot)
+      bestSel = {tot, four: c.map((k, l) => ({...scored[k], stroke: PLEW_STROKES[p[l]], stPts: scored[k].st[p[l]]}))};
+  }
+  return bestSel;
+}
+function plewSquads(pool, F4, M4){
+  // répartir 4F+4M en 2 relais 4x50 4N mixtes (2F+2M chacun), Σ chrono minimal
+  const t50 = (i, st) => (poolGet(pool, i, 50, st) || {}).t || 12000; // pénalité si inconnu
+  const relTime = quad => { // meilleur ordre Dos,Brasse,Pap,NL pour 4 nageurs
+    let best = Infinity, bestLegs = null;
+    const perm = (arr, acc) => {
+      if (!arr.length) {
+        const tot = acc.reduce((s2, a, l) => s2 + t50(a, LEGS_4N[l]), 0);
+        if (tot < best) { best = tot; bestLegs = acc.map((a, l) => ({sw: a, st: LEGS_4N[l], t: t50(a, LEGS_4N[l])})); }
+        return; }
+      for (let k = 0; k < arr.length; k++) perm(arr.filter((_, j) => j !== k), [...acc, arr[k]]);
+    };
+    perm(quad, []);
+    return {total: best, legs: bestLegs};
+  };
+  let bestSplit = null;
+  const pairsOf = a => [[0,1],[0,2],[0,3],[1,2],[1,3],[2,3]].map(p => [a[p[0]], a[p[1]]]);
+  for (const fA of pairsOf(F4)) for (const mA of pairsOf(M4)) {
+    const fB = F4.filter(x => !fA.includes(x)), mB = M4.filter(x => !mA.includes(x));
+    const rA = relTime([...fA, ...mA]), rB = relTime([...fB, ...mB]);
+    const key = Math.min(rA.total, rB.total) * 100000 + rA.total + rB.total;
+    if (!bestSplit || key < bestSplit.key) bestSplit = {key, rA, rB};
+  }
+  return bestSplit;
+}
+function renderPlew(pool, h){
+  const s = S(), yr = refYear();
+  const inPool = new Set();
+  pool.forEach((v, k) => inPool.add(+k.split("|")[0]));
+  const elig = sex => s.swimmers.map((w, i) => ({i, w}))
+    .filter(x => x.w[2] === sex && x.w[3] && (yr - x.w[3]) <= 11 && inPool.has(x.i));
+  const makeTeam = excl => {
+    const F = elig("F").filter(x => !excl.has(x.i)), M = elig("M").filter(x => !excl.has(x.i));
+    const qF = plewBestQuartet(pool, F), qM = plewBestQuartet(pool, M);
+    if (!qF || !qM) return null;
+    return {qF, qM};
+  };
+  const teamBlock = (team, num, excl) => {
+    const eight = [...team.qF.four, ...team.qM.four];
+    const totalInd = team.qF.tot + team.qM.tot;
+    let x = `<h3 style="font-size:15px;margin:16px 0 6px">Équipe ${num} — <span style="color:var(--accent)">${totalInd} points individuels</span></h3>
+    <table><thead><tr><th>Nageur</th><th>Année</th><th>Club</th><th>Course de nage</th><th>Pts nage</th><th>100 4N (pts)</th></tr></thead><tbody>`;
+    for (const m of eight) {
+      const w = s.swimmers[m.i];
+      x += `<tr data-sw="${m.i}"><td class="name">${swName(m.i)} <span class="tag ${w[2]==='F'?'sexF':'sexM'}">${w[2]==='F'?'F':'G'}</span></td><td>${w[3]}</td><td>${s.clubs[w[4]]}</td><td>100 m ${STROKES[m.stroke]}</td><td class="pts">${m.stPts || "—"}</td><td class="pts">${m.p4 || "—"}</td></tr>`;
+    }
+    x += `</tbody></table>`;
+    // relais 8x50 NL
+    const nl = eight.map(m => ({sw: m.i, t: (poolGet(pool, m.i, 50, 0) || {}).t}));
+    const known = nl.filter(m => m.t);
+    x += `<h3 style="font-size:13.5px;margin:12px 0 4px">Relais 8×50 NL — <span style="color:var(--accent)">Σ ${fmtTime(known.reduce((a,m)=>a+m.t,0))}</span>${known.length < 8 ? ` <span class="tag">${known.length}/8 temps connus</span>` : ""}</h3>`;
+    // 2 relais 4x50 4N mixtes
+    const sp = plewSquads(pool, team.qF.four.map(m => m.i), team.qM.four.map(m => m.i));
+    if (sp) {
+      const squad = (r, lab) => `<h3 style="font-size:13.5px;margin:10px 0 4px">Relais 4×50 4N — équipe ${num}${lab} — <span style="color:var(--accent)">Σ ${fmtTime(r.total)}</span></h3>
+        <p class="count">${r.legs.map(l => s.swimmers[l.sw][0] + " — " + STROKES[l.st] + (l.t < 12000 ? " (" + fmtTime(l.t) + ")" : " (temps inconnu)")).join(" · ")}</p>`;
+      x += squad(sp.rA, "a") + squad(sp.rB, "b");
+    }
+    // remplaçants 1F + 1G
+    const usedNow = new Set([...excl, ...eight.map(m => m.i)]);
+    const sub = sex => elig(sex).filter(c => !usedNow.has(c.i))
+      .map(c => ({i: c.i, sc: ((poolGet(pool, c.i, 100, 4) || {}).p || 0) + Math.max(...PLEW_STROKES.map(s2 => (poolGet(pool, c.i, 100, s2) || {}).p || 0))}))
+      .sort((a,b) => b.sc - a.sc)[0];
+    const sF = sub("F"), sM = sub("M");
+    if (sF || sM) x += `<p class="count" style="margin-top:6px"><b>Remplaçants suggérés :</b> ${[sF, sM].filter(Boolean).map(z => s.swimmers[z.i][0] + " " + s.swimmers[z.i][1]).join(" · ")}</p>`;
+    return {html: x, members: eight.map(m => m.i), subs: [sF, sM].filter(Boolean).map(z => z.i)};
+  };
+  const t1 = makeTeam(new Set());
+  if (!t1) { h += `<div class="empty">Pas assez de nageurs U11 (4 filles + 4 garçons) avec des performances — élargissez les filtres (clubs…).</div>`; return h; }
+  const b1 = teamBlock(t1, 1, new Set());
+  h += `<p class="count">Règlement : équipes mixtes de 8 (4 filles + 4 garçons), U11 et moins · chaque nage nagée par 1 fille et 1 garçon · 100 4N pour tous · chaque nageur dispute les 2 relais.</p>` + b1.html;
+  const excl2 = new Set([...b1.members, ...b1.subs]);
+  const t2 = makeTeam(excl2);
+  if (t2) h += teamBlock(t2, 2, excl2).html;
+  return h;
+}
+function renderTeam(){
+  const s = S();
+  document.getElementById("stats").innerHTML = "";
+  document.getElementById("count").textContent = "Composeur d'équipes — utilise les filtres généraux (clubs, catégories, années, bassin, période)";
+  const rc = state.relayCfg, tc2 = state.teamCfg;
+  let h = `<div class="panel"><div class="frow">
+    <div class="fgroup"><div class="lab">Mode</div><div class="seg">
+      <button ${state.teamMode==="relay"?'class="on"':''} onclick="window._tm('relay')">Relais seul</button>
+      <button ${state.teamMode==="team"?'class="on"':''} onclick="window._tm('team')">Équipe type compétition</button>
+    </div></div>`;
+  if (state.teamMode === "relay") {
+    h += `<div class="fgroup"><div class="lab">Relais</div><div style="display:flex;gap:6px;flex-wrap:wrap">
+      <select onchange="window._rc('legs',this.value)">${[4,8,10].map(n=>`<option value="${n}" ${rc.legs==n?"selected":""}>${n} relayeurs</option>`).join("")}</select>
+      <select onchange="window._rc('dist',this.value)">${[50,100,200].map(d=>`<option value="${d}" ${rc.dist==d?"selected":""}>${d} m</option>`).join("")}</select>
+      <select onchange="window._rc('stroke',this.value)"><option value="FREE" ${rc.stroke==="FREE"?"selected":""}>Nage Libre</option><option value="MEDLEY" ${rc.stroke==="MEDLEY"?"selected":""}>4 Nages</option></select>
+      <select onchange="window._rc('comp',this.value)"><option value="F" ${rc.comp==="F"?"selected":""}>Filles</option><option value="M" ${rc.comp==="M"?"selected":""}>Garçons</option><option value="X" ${rc.comp==="X"?"selected":""}>Mixte (moitié/moitié)</option></select>
+    </div></div>`;
+  } else {
+    const isPlew = PRESETS[tc2.preset].custom === "plew";
+    h += `<div class="fgroup"><div class="lab">Compétition</div><div style="display:flex;gap:6px;flex-wrap:wrap">
+      <select onchange="window._tc('preset',this.value)">${Object.entries(PRESETS).map(([k,p])=>`<option value="${k}" ${tc2.preset===k?"selected":""}>${p.label}</option>`).join("")}</select>
+      ${isPlew ? '<span class="tag" style="align-self:center">équipes mixtes 4 F + 4 G (règlement)</span>' :
+      `<select onchange="window._tc('sex',this.value)"><option value="F" ${tc2.sex==="F"?"selected":""}>Filles</option><option value="M" ${tc2.sex==="M"?"selected":""}>Garçons</option></select>`}
+    </div></div>`;
+  }
+  h += `</div></div>`;
+  const pool = teamPool();
+  if (state.teamMode === "relay") {
+    if (rc.stroke === "MEDLEY" && rc.legs != 4) { h += `<div class="empty">Le relais 4 Nages se nage à 4 relayeurs.</div>`; }
+    else {
+      const cands = eligibleSwimmers(rc.comp === "X" ? "X" : rc.comp);
+      const t1 = bestRelay(pool, cands, rc, null);
+      if (!t1) h += `<div class="empty">Pas assez de nageurs avec un temps sur cette distance (élargissez les filtres).</div>`;
+      else {
+        const used = new Set(t1.legs.map(l => l.sw));
+        const t2 = bestRelay(pool, cands, rc, used);
+        const table = (t, titre) => {
+          let x = `<h3 style="font-size:14px;margin:14px 0 6px">${titre} — <span style="color:var(--accent)">Σ ${fmtTime(t.total)}</span></h3>
+          <table><thead><tr><th>#</th><th>Nageur</th><th>Année</th><th>Club</th><th>Nage</th><th>Temps</th></tr></thead><tbody>`;
+          t.legs.forEach((l, i) => { const w = s.swimmers[l.sw];
+            x += `<tr data-sw="${l.sw}"><td class="rank">${i+1}</td><td class="name">${swName(l.sw)} <span class="tag ${w[2]==='F'?'sexF':'sexM'}">${w[2]==='F'?'F':'G'}</span></td><td>${w[3]}</td><td>${s.clubs[w[4]]}</td><td>${l.dist} m ${STROKES[l.stroke]}</td><td class="time">${fmtTime(l.time)}</td></tr>`; });
+          return x + `</tbody></table>`;
+        };
+        h += table(t1, "Meilleure équipe");
+        if (t2) h += table(t2, "Deuxième équipe (sans les titulaires)");
+      }
+    }
+  } else if (PRESETS[tc2.preset].custom === "plew") {
+    h = renderPlew(pool, h);
+    document.getElementById("tableZone").innerHTML = h;
+    document.querySelectorAll("#tableZone tr[data-sw]").forEach(tr => tr.onclick = () => openModal(+tr.dataset.sw));
+    return;
+  } else {
+    const preset = PRESETS[tc2.preset];
+    const cands = eligibleSwimmers(tc2.sex);
+    const res = bestTeam(pool, cands, preset);
+    if (!res.assign.length) h += `<div class="empty">Aucune affectation possible (élargissez les filtres).</div>`;
+    else {
+      h += `<h3 style="font-size:14px;margin:14px 0 6px">Courses individuelles — <span style="color:var(--accent)">${res.total} points</span> · équipe de ${res.team.size} nageur(s)</h3>
+      <table><thead><tr><th>Épreuve</th><th>Nageur</th><th>Année</th><th>Points</th><th>Temps</th></tr></thead><tbody>`;
+      res.assign.sort((a,b) => a.ei - b.ei).forEach(a => {
+        const ev = res.events[a.ei], w = s.swimmers[a.sw];
+        const g = poolGet(pool, a.sw, ev.d, ev.st);
+        h += `<tr data-sw="${a.sw}"><td>${ev.d} m ${STROKES[ev.st]}</td><td class="name">${swName(a.sw)}</td><td>${w[3]}</td><td class="pts">${a.pts}</td><td class="time">${g ? fmtTime(g.t) : "—"}</td></tr>`; });
+      h += `</tbody></table>`;
+      const teamCands = [...res.team].map(i => ({i, w: s.swimmers[i]}));
+      preset.relays.forEach(r0 => {
+        const cfg = {stroke: r0.stroke === "MEDLEY_IND" ? "MEDLEY" : r0.stroke, dist: r0.dist, legs: r0.legs, comp: tc2.sex};
+        if (r0.stroke === "MEDLEY_IND") {
+          // relais 4x100 4N individuel : 4 meilleurs 100 4N
+          const list = teamCands.map(x => ({sw: x.i, t: (poolGet(pool, x.i, r0.dist, 4) || {}).t})).filter(x => x.t).sort((a,b) => a.t - b.t).slice(0, r0.legs);
+          if (list.length === r0.legs) {
+            h += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} 4 Nages (ind.) — <span style="color:var(--accent)">Σ ${fmtTime(list.reduce((a,x)=>a+x.t,0))}</span></h3><p class="count">${list.map(x => s.swimmers[x.sw][0] + " (" + fmtTime(x.t) + ")").join(" · ")}</p>`;
+          }
+          return;
+        }
+        const t = bestRelay(pool, teamCands, cfg, null);
+        if (t) {
+          h += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} ${r0.stroke==="FREE"?"NL":"4 Nages"} (avec l'équipe) — <span style="color:var(--accent)">Σ ${fmtTime(t.total)}</span></h3>
+          <p class="count">${t.legs.map(l => s.swimmers[l.sw][0] + " — " + STROKES[l.stroke] + " (" + fmtTime(l.time) + ")").join(" · ")}</p>`;
+        }
+      });
+      h += `<p class="count" style="margin-top:10px">Objectifs : points individuels maximisés (max ${preset.maxRaces} courses/nageur, ${preset.size} nageurs), relais au chrono minimal composés avec l'équipe retenue. Ajustez le vivier avec les filtres généraux (clubs, années, catégories…).</p>`;
+    }
+  }
+  document.getElementById("tableZone").innerHTML = h;
+  document.querySelectorAll("#tableZone tr[data-sw]").forEach(tr => tr.onclick = () => openModal(+tr.dataset.sw));
+}
+window._tm = v => { state.teamMode = v; render(); };
+window._rc = (k, v) => { state.relayCfg[k] = (k === "stroke" || k === "comp") ? v : +v; render(); };
+window._tc = (k, v) => { state.teamCfg[k] = v; render(); };
+
 function render(){
+  if (state.view === "team") { renderTeam(); return; }
   if (state.view === "cumul") { renderCumul(); return; }
   const s = S();
   const rows = sortRows(bestRows());
@@ -685,6 +1048,18 @@ document.getElementById("foot").innerHTML =
   `ils sont identifiés en croisant les fichiers officiels Lenex (ordre des relayeurs et temps de passage) avec les fiches extraNat. ` +
   `Cliquez sur un nageur pour ouvrir sa fiche complète. Base générée le 08/08/2026.`;
 buildFilters();
+// accès sélectif au composeur (site partagé : selon le code saisi ; fichier local : toujours visible)
+(function(){
+  const chk = () => {
+    const a = window.AIN_ACCESS;
+    if (a && !a.all && !(a.tabs || []).includes("ain_relais")) {
+      const b = document.getElementById("btnTeamView");
+      if (b) b.style.display = "none";
+      if (state.view === "team") { state.view = "event"; render(); }
+    }
+  };
+  chk(); window.addEventListener("ain-access", chk);
+})();
 render();
 </script>
 
@@ -711,12 +1086,12 @@ render();
   }
   async function tryCode(v){
     /* 1) code maître (coach) */
-    try { if ((await sha256(v)) === HASH) return {ok:true}; } catch(e) {}
+    try { if ((await sha256(v)) === HASH) return {ok:true, all:true}; } catch(e) {}
     /* 2) code personnel, vérifié auprès du serveur de gestion du coach */
     try {
       var r = await fetch(WORKER + "consult?code=" + encodeURIComponent(v));
       var d = await r.json();
-      if (d.ok && d.viewer && (d.viewer.tabs || []).indexOf("ain") >= 0) return {ok:true, nom:d.viewer.nom};
+      if (d.ok && d.viewer && (d.viewer.tabs || []).indexOf("ain") >= 0) return {ok:true, nom:d.viewer.nom, tabs:d.viewer.tabs || []};
       if (d.ok) return {ok:false, msg:"Ce code n'ouvre pas la Base Ain (accès non attribué)."};
       return {ok:false, msg:"Code d'accès invalide ou révoqué."};
     } catch(e) { return {ok:false, msg:"Vérification impossible — vérifiez votre connexion internet."}; }
@@ -725,7 +1100,7 @@ render();
     var btn = document.getElementById("gateBtn"), msg = document.getElementById("gateMsg");
     btn.disabled = true; btn.textContent = "Vérification…"; msg.textContent = "";
     var res = await tryCode((v || "").trim());
-    if (res.ok) { document.getElementById("gate").remove(); }
+    if (res.ok) { window.AIN_ACCESS = res.all ? {all:true} : {tabs: res.tabs || []}; try { window.dispatchEvent(new Event("ain-access")); } catch(e) {} document.getElementById("gate").remove(); }
     else { msg.textContent = res.msg || "Code incorrect"; document.getElementById("gateCode").value = "";
            btn.disabled = false; btn.textContent = "Entrer"; }
   }
