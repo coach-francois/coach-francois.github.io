@@ -98,7 +98,7 @@ footer{margin-top:22px;font-size:11.5px;color:var(--muted);line-height:1.6}
 <body>
 <header>
   <h1>🏊 Nageurs de l'Ain — Meilleures performances &amp; points</h1>
-  <div class="sub">Base construite à partir des compétitions FFN des clubs de l'Ain · Amberieu · Bourg-en-Bresse · Pays de Gex · Oyonnax · Bellegarde</div>
+  <div class="sub">Base construite à partir des compétitions FFN des clubs de l'Ain · Amberieu · Bourg-en-Bresse · Pays de Gex · Oyonnax · Bellegarde · Belley</div>
 </header>
 <div class="wrap">
 
@@ -1069,7 +1069,7 @@ document.getElementById("foot").innerHTML =
 /* ---------- Mise à jour en un clic (coach) : via le Worker Cloudflare ---------- */
 const AIN_WORKER = "https://super-math-ffn-perfs.francois-debutnocode.workers.dev/";
 const DATA0 = JSON.parse(JSON.stringify(DATA));
-const LIVE_CLUBS = {"806":"AMBERIEU NAT BUGEY COTIERE","203":"CN BOURG-EN-BRESSE","2607":"PAYS DE GEX NATATION","253":"SN OYONNAX","661":"CN BELLEGARDE"};
+const LIVE_CLUBS = {"806":"AMBERIEU NAT BUGEY COTIERE","203":"CN BOURG-EN-BRESSE","2607":"PAYS DE GEX NATATION","253":"SN OYONNAX","661":"CN BELLEGARDE","244":"CN BELLEY BUGEY SUD"};
 const STROKE_FR2IDX = {"Nage Libre":0,"Dos":1,"Brasse":2,"Papillon":3,"4 Nages":4};
 function liveParseTime(t){ const m = (t||"").match(/^(\d+):(\d+)\.(\d+)$/); return m ? (+m[1]*6000 + +m[2]*100 + +m[3]) : null; }
 function applyLive(live){
