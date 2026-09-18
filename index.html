@@ -548,8 +548,8 @@ function renderCumul(){
     h += `<tr class="top${i+1<=3?i+1:''}" data-sw="${x.sw}">
       <td class="rank">${i+1}</td>
       <td class="name"><b>${w[0]}</b> ${w[1]} <span class="tag ${w[2]==='F'?'sexF':'sexM'}">${w[2]==='F'?'F':'G'}</span></td>
-      <td>${w[3] ?? "?"} <span class="tag">${w[3] ? refYearFor(seasonKeyOf(m[4], state.mode)) - w[3] : "?"} ans</span></td>
-      <td>${catAt(w[3], refYearFor(seasonKeyOf(m[4], state.mode)))}</td>
+      <td>${w[3] ?? "?"} <span class="tag">${w[3] ? refYear() - w[3] : "?"} ans</span></td>
+      <td>${catAt(w[3], refYear())}</td>
       <td>${s.clubs[w[4]]}</td>`;
     if (showCols) evKeys.forEach(k => {
       const r = x.m.get(k);
