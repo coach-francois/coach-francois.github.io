@@ -230,6 +230,9 @@ function defaultState(){
     view: "event",
     teamMode: "relay",
     relayCfg: {stroke: "FREE", legs: 4, dist: 50, comp: "F"},
+    relaySel: new Set(),
+    relaySelActive: false,
+    _rsOpen: false,
     teamCfg: {preset: "u11", sex: "F"},
     sort: {key:"pts", dir:-1},
   };
@@ -634,8 +637,14 @@ function bestRelay(pool, cands, cfg, exclude){
             total: pick.reduce((a,x) => a + x.t, 0)};
   }
   // relais 4 nages : affectation optimale (force brute sur les 8 meilleurs par nage)
-  const perLeg = LEGS_4N.map(st => cands.map(x => ({sw: x.i, st, t: (poolGet(pool, x.i, cfg.dist, st) || {}).t}))
-    .filter(x => x.t && !excl.has(x.sw)).sort((a,b) => a.t - b.t).slice(0, 8));
+  const perLeg = LEGS_4N.map(st => {
+    const all = cands.map(x => ({sw: x.i, st, t: (poolGet(pool, x.i, cfg.dist, st) || {}).t}))
+      .filter(x => x.t && !excl.has(x.sw)).sort((a,b) => a.t - b.t);
+    if (cfg.comp !== "X") return all.slice(0, 8);
+    const topF = all.filter(x => s.swimmers[x.sw][2] === "F").slice(0, 8);
+    const topM = all.filter(x => s.swimmers[x.sw][2] === "M").slice(0, 8);
+    return topF.concat(topM).sort((a,b) => a.t - b.t);
+  });
   if (perLeg.some(l => !l.length)) return null;
   let bestA = null;
   const rec = (li, used, acc, legs) => {
@@ -826,11 +835,13 @@ function renderTeam(){
       <button ${state.teamMode==="team"?'class="on"':''} onclick="window._tm('team')">Équipe type compétition</button>
     </div></div>`;
   if (state.teamMode === "relay") {
+    const stdLegs = [4,6,8,10].includes(+rc.legs);
     h += `<div class="fgroup"><div class="lab">Relais</div><div style="display:flex;gap:6px;flex-wrap:wrap">
-      <select onchange="window._rc('legs',this.value)">${[4,8,10].map(n=>`<option value="${n}" ${rc.legs==n?"selected":""}>${n} relayeurs</option>`).join("")}</select>
+      <select onchange="window._rcLegs(this.value)">${[4,6,8,10].map(n=>`<option value="${n}" ${stdLegs && rc.legs==n?"selected":""}>${n} relayeurs</option>`).join("")}<option value="autre" ${stdLegs?"":"selected"}>Autre…</option></select>
+      ${stdLegs ? "" : `<input type="number" min="4" max="20" value="${rc.legs}" onchange="window._rc('legs',this.value)" style="width:90px" title="Nombre de relayeurs (4 à 20)">`}
       <select onchange="window._rc('dist',this.value)">${[50,100,200].map(d=>`<option value="${d}" ${rc.dist==d?"selected":""}>${d} m</option>`).join("")}</select>
       <select onchange="window._rc('stroke',this.value)"><option value="FREE" ${rc.stroke==="FREE"?"selected":""}>Nage Libre</option><option value="MEDLEY" ${rc.stroke==="MEDLEY"?"selected":""}>4 Nages</option></select>
-      <select onchange="window._rc('comp',this.value)"><option value="F" ${rc.comp==="F"?"selected":""}>Filles</option><option value="M" ${rc.comp==="M"?"selected":""}>Garçons</option><option value="X" ${rc.comp==="X"?"selected":""}>Mixte (moitié/moitié)</option></select>
+      <select onchange="window._rc('comp',this.value)"><option value="F" ${rc.comp==="F"?"selected":""}>Dames</option><option value="M" ${rc.comp==="M"?"selected":""}>Messieurs</option><option value="X" ${rc.comp==="X"?"selected":""}>Mixte (moitié/moitié)</option></select>
     </div></div>`;
   } else {
     const isPlew = PRESETS[tc2.preset].custom === "plew";
@@ -845,21 +856,50 @@ function renderTeam(){
   if (state.teamMode === "relay") {
     if (rc.stroke === "MEDLEY" && rc.legs != 4) { h += `<div class="empty">Le relais 4 Nages se nage à 4 relayeurs.</div>`; }
     else {
-      const cands = eligibleSwimmers(rc.comp === "X" ? "X" : rc.comp);
-      const t1 = bestRelay(pool, cands, rc, null);
-      if (!t1) h += `<div class="empty">Pas assez de nageurs avec un temps sur cette distance (élargissez les filtres).</div>`;
+      const inPoolR = new Set();
+      pool.forEach((v, k) => inPoolR.add(+k.split("|")[0]));
+      const roster = eligibleSwimmers(rc.comp === "X" ? "X" : rc.comp)
+        .filter(x => inPoolR.has(x.i))
+        .sort((a,b) => (a.w[0] + " " + a.w[1]).localeCompare(b.w[0] + " " + b.w[1], "fr"));
+      window._rsRoster = roster.map(x => x.i);
+      if (state.relaySelActive && state.relaySel) for (const iR of [...state.relaySel]) if (!inPoolR.has(iR)) state.relaySel.delete(iR);
+      const nSel = state.relaySelActive ? roster.filter(x => state.relaySel.has(x.i)).length : roster.length;
+      h += `<div class="panel"><details ${state._rsOpen ? "open" : ""} ontoggle="state._rsOpen=this.open">
+        <summary class="dd-btn" style="cursor:pointer;display:inline-block">🏊 Nageurs du vivier : <b id="rsCount">${state.relaySelActive ? nSel + " choisi(s)" : "tous (" + roster.length + ")"}</b> ▾</summary>
+        <div style="margin-top:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
+            <input placeholder="Rechercher un nom…" oninput="window._rsFilter(this.value)" style="min-width:200px">
+            <button class="chip" onclick="window._rsMode('all')">Tout cocher</button>
+            <button class="chip" onclick="window._rsMode('none')">Tout décocher</button>
+            <button class="chip" style="font-weight:700;border-color:var(--accent)" onclick="window._rsApply()">✓ Recalculer les relais</button>
+          </div>
+          <div id="rsList" style="max-height:290px;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:3px 14px">
+            ${roster.map(x => `<label style="display:flex;gap:7px;align-items:center;cursor:pointer"><input type="checkbox" ${(!state.relaySelActive || state.relaySel.has(x.i)) ? "checked" : ""} onchange="window._rsTog(${x.i}, this.checked)"> <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.w[0]} ${x.w[1]}</span> <span class="tag ${x.w[2]==='F'?'sexF':'sexM'}">${x.w[2]==='F'?'F':'G'}</span> <span class="tag">${x.w[3] ?? "?"}</span></label>`).join("")}
+          </div>
+        </div>
+      </details></div>`;
+      const cands = roster.filter(x => !state.relaySelActive || state.relaySel.has(x.i));
+      if (rc.comp === "X" && rc.legs % 2) h += `<div class="empty">En mixte, choisissez un nombre pair de relayeurs (moitié dames, moitié messieurs).</div>`;
       else {
-        const used = new Set(t1.legs.map(l => l.sw));
-        const t2 = bestRelay(pool, cands, rc, used);
-        const table = (t, titre) => {
-          let x = `<h3 style="font-size:14px;margin:14px 0 6px">${titre} — <span style="color:var(--accent)">Σ ${fmtTime(t.total)}</span></h3>
-          <table><thead><tr><th>#</th><th>Nageur</th><th>Année</th><th>Club</th><th>Nage</th><th>Temps</th></tr></thead><tbody>`;
-          t.legs.forEach((l, i) => { const w = s.swimmers[l.sw];
-            x += `<tr data-sw="${l.sw}"><td class="rank">${i+1}</td><td class="name">${swName(l.sw)} <span class="tag ${w[2]==='F'?'sexF':'sexM'}">${w[2]==='F'?'F':'G'}</span></td><td>${w[3]}</td><td>${s.clubs[w[4]]}</td><td>${l.dist} m ${STROKES[l.stroke]}</td><td class="time">${fmtTime(l.time)}</td></tr>`; });
-          return x + `</tbody></table>`;
-        };
-        h += table(t1, "Meilleure équipe");
-        if (t2) h += table(t2, "Deuxième équipe (sans les titulaires)");
+        const teams = [], usedAll = new Set();
+        while (teams.length < 12) {
+          const t = bestRelay(pool, cands, rc, usedAll);
+          if (!t) break;
+          teams.push(t);
+          t.legs.forEach(l => usedAll.add(l.sw));
+        }
+        if (!teams.length) h += `<div class="empty">Pas assez de nageurs avec un temps sur cette distance (élargissez les filtres ou cochez plus de nageurs).</div>`;
+        else {
+          const table = (t, titre) => {
+            let x = `<h3 style="font-size:14px;margin:14px 0 6px">${titre} — <span style="color:var(--accent)">Σ ${fmtTime(t.total)}</span></h3>
+            <table><thead><tr><th>#</th><th>Nageur</th><th>Année</th><th>Club</th><th>Nage</th><th>Temps</th></tr></thead><tbody>`;
+            t.legs.forEach((l, i) => { const w = s.swimmers[l.sw];
+              x += `<tr data-sw="${l.sw}"><td class="rank">${i+1}</td><td class="name">${swName(l.sw)} <span class="tag ${w[2]==='F'?'sexF':'sexM'}">${w[2]==='F'?'F':'G'}</span></td><td>${w[3]}</td><td>${s.clubs[w[4]]}</td><td>${l.dist} m ${STROKES[l.stroke]}</td><td class="time">${fmtTime(l.time)}</td></tr>`; });
+            return x + `</tbody></table>`;
+          };
+          teams.forEach((t, i) => h += table(t, "Équipe " + (i+1) + (i === 0 ? " (la plus rapide)" : "")));
+          h += `<p class="count" style="margin-top:8px">${teams.length} relais complet(s) — ${usedAll.size} nageur(s) alignés sur ${cands.length} disponibles${state.relaySelActive ? " (sélection manuelle active)" : ""}.</p>`;
+        }
       }
     }
   } else if (PRESETS[tc2.preset].custom === "plew") {
@@ -904,7 +944,16 @@ function renderTeam(){
   document.querySelectorAll("#tableZone tr[data-sw]").forEach(tr => tr.onclick = () => openModal(+tr.dataset.sw));
 }
 window._tm = v => { state.teamMode = v; render(); };
-window._rc = (k, v) => { state.relayCfg[k] = (k === "stroke" || k === "comp") ? v : +v; render(); };
+window._rc = (k, v) => { if (k === "legs") state.relayCfg.legs = Math.max(4, Math.min(20, +v || 4)); else state.relayCfg[k] = (k === "stroke" || k === "comp") ? v : +v; render(); };
+window._rcLegs = v => { state.relayCfg.legs = (v === "autre") ? 12 : +v; render(); };
+window._rsTog = (i, ck) => {
+  if (!state.relaySelActive) { state.relaySelActive = true; state.relaySel = new Set(window._rsRoster || []); }
+  if (ck) state.relaySel.add(i); else state.relaySel.delete(i);
+  const el = document.getElementById("rsCount"); if (el) el.textContent = state.relaySel.size + " choisi(s)";
+};
+window._rsMode = m => { state._rsOpen = true; state.relaySelActive = (m !== "all"); state.relaySel = new Set(); render(); };
+window._rsFilter = q => { q = (q || "").toLowerCase(); document.querySelectorAll("#rsList label").forEach(l => { l.style.display = l.textContent.toLowerCase().includes(q) ? "" : "none"; }); };
+window._rsApply = () => { state._rsOpen = true; render(); };
 window._tc = (k, v) => { state.teamCfg[k] = v; render(); };
 
 function render(){
