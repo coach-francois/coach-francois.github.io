@@ -233,6 +233,7 @@ function defaultState(){
     relaySel: new Set(),
     relaySelActive: false,
     licOnly: false,
+    tcGlobal: false,
     _rsOpen: false,
     teamCfg: {preset: "u11", sex: "F"},
     sort: {key:"pts", dir:-1},
@@ -578,9 +579,9 @@ const PRESETS = {
          ind: [[100,3],[100,1],[100,2],[100,0]],
          relays: [{legs:4, dist:50, stroke:"FREE"},{legs:4, dist:100, stroke:"MEDLEY_IND"}]},
   plew: {label: "Coupe Plewinski (8 nageurs : 4 F + 4 G, U11 et moins)", custom: "plew"},
-  tc:   {label: "Interclubs TC (10 nageurs)", size: 10, maxRaces: 2, cap: 2,
-         ind: [[100,0],[200,0],[400,0],[100,1],[200,1],[100,2],[200,2],[100,3],[200,3],[200,4]],
-         relays: [{legs:10, dist:50, stroke:"FREE"},{legs:4, dist:100, stroke:"MEDLEY"}]},
+  tc:   {label: "Interclubs TC (10 nageurs)", size: 10, maxRaces: 1, cap: 1, oneEach: true,
+         ind: [[100,0],[400,0],[100,1],[200,1],[100,2],[200,2],[100,3],[200,3],[100,4],[200,4]],
+         relays: [{legs:10, dist:50, stroke:"FREE"},{legs:4, dist:200, stroke:"FREE"},{legs:4, dist:100, stroke:"MEDLEY"}]},
   cdep: {label: "Coupe des Départements (10 nageurs)", size: 10, maxRaces: 2, cap: 1,
          ind: [[50,3],[50,1],[50,2],[200,0],[200,3],[200,1],[200,2],[200,4],[400,0],[400,4]],
          relays: [{legs:10, dist:50, stroke:"FREE"},{legs:4, dist:50, stroke:"MEDLEY"}]},
@@ -665,6 +666,127 @@ function bestRelay(pool, cands, cfg, exclude){
   return bestA;
 }
 // équipe compétition : slots (épreuves ind avec capacité) -> affectation max points
+// Interclubs TC : chaque nageur nage EXACTEMENT 1 épreuve individuelle (10 nageurs / 10 épreuves).
+// Affectation optimale exacte par programmation dynamique (masque de 10 épreuves).
+function bestTeamOneEach(pool, cands, preset){
+  const events = preset.ind.map(([d, st]) => ({d, st}));
+  const n = events.length, FULL = 1 << n;
+  let dp = new Array(FULL).fill(null); dp[0] = {pts: 0, picks: []};
+  for (const c of cands) {
+    const sc = events.map(ev => { const g = poolGet(pool, c.i, ev.d, ev.st); return g ? g.p : -1; });
+    if (sc.every(p => p < 0)) continue;
+    const ndp = dp.slice();
+    for (let m = 0; m < FULL; m++) {
+      if (!dp[m]) continue;
+      for (let e = 0; e < n; e++) {
+        if ((m & (1 << e)) || sc[e] < 0) continue;
+        const nm = m | (1 << e), v = dp[m].pts + sc[e];
+        if (!ndp[nm] || v > ndp[nm].pts) ndp[nm] = {pts: v, picks: dp[m].picks.concat([{ei: e, sw: c.i, pts: sc[e]}])};
+      }
+    }
+    dp = ndp;
+  }
+  let best = {pts: 0, picks: []};
+  for (let m = 0; m < FULL; m++) {
+    if (!dp[m]) continue;
+    if (dp[m].picks.length > best.picks.length || (dp[m].picks.length === best.picks.length && dp[m].pts > best.pts)) best = dp[m];
+  }
+  return {assign: best.picks, events, team: new Set(best.picks.map(p => p.sw)), total: best.pts};
+}
+// Table de cotation FFN des relais, étalonnée sur les points officiels des Interclubs TC Ain du 09/11/2025
+// (couples temps en centièmes → points ; interpolation linéaire entre les points connus, extrapolation aux extrémités)
+const RELAY_COT = {
+  "10x50NL|M": [[26805,1066],[26963,1057],[28047,994],[28910,946],[31351,815],[31516,807],[37670,522],[41133,389]],
+  "10x50NL|F": [[29721,1094],[29786,1091],[30911,1029],[34266,856],[34538,842],[37367,710],[39028,637],[43277,469]],
+  "4x200NL|M": [[50546,1019],[51997,961],[55718,820],[57106,770],[59437,690],[60829,645],[64246,539],[70661,367],[78879,194]],
+  "4x200NL|F": [[55603,1033],[56234,1010],[59283,899],[61061,838],[66414,666],[66449,665],[70871,538],[76549,394],[82981,259],[84476,231]],
+  "4x1004N|M": [[24315,1119],[25848,1010],[26434,970],[29275,786],[29348,782],[30125,735],[32184,619],[39586,282],[43960,145]],
+  "4x1004N|F": [[28917,1015],[29541,975],[31082,879],[33127,760],[35553,630],[38537,487],[41849,349]],
+};
+function relayCotPoints(key, cs){
+  const tab = RELAY_COT[key];
+  if (!tab || !cs) return null;
+  if (cs <= tab[0][0]) { const a = tab[0], b = tab[1]; return Math.max(0, Math.round(a[1] + (a[1]-b[1]) * (a[0]-cs) / (b[0]-a[0]))); }
+  const z = tab[tab.length-1];
+  if (cs >= z[0]) { const a = tab[tab.length-2]; return Math.max(0, Math.round(z[1] - (a[1]-z[1]) * (cs-z[0]) / (z[0]-a[0]))); }
+  for (let i = 1; i < tab.length; i++) if (cs <= tab[i][0]) {
+    const [c0,p0] = tab[i-1], [c1,p1] = tab[i];
+    return Math.round(p0 + (p1-p0) * (cs-c0) / (c1-c0));
+  }
+  return null;
+}
+// points individuels optimaux (couverture d'épreuves max, puis points max) — version rapide sans reconstruction
+function tcIndBestPts(pool, members, events){
+  const n = events.length, FULL = 1 << n;
+  let dp = new Float64Array(FULL).fill(-1); dp[0] = 0;
+  for (const sw of members) {
+    const sc = events.map(ev => { const g = poolGet(pool, sw, ev.d, ev.st); return g ? g.p : -1; });
+    if (sc.every(p => p < 0)) continue;
+    const ndp = Float64Array.from(dp);
+    for (let m = 0; m < FULL; m++) {
+      if (dp[m] < 0) continue;
+      for (let e = 0; e < n; e++) {
+        if ((m & (1 << e)) || sc[e] < 0) continue;
+        const nm = m | (1 << e), v = dp[m] + sc[e];
+        if (v > ndp[nm]) ndp[nm] = v;
+      }
+    }
+    dp = ndp;
+  }
+  let bc = -1, bp = 0;
+  for (let m = 0; m < FULL; m++) {
+    if (dp[m] < 0) continue;
+    let c = 0, x = m; while (x) { x &= x - 1; c++; }
+    if (c > bc || (c === bc && dp[m] > bp)) { bc = c; bp = dp[m]; }
+  }
+  return {cnt: Math.max(bc, 0), pts: bp};
+}
+// points des 3 relais Interclubs pour une équipe donnée (temps manquants du 10×50 : plus lent connu +5 %)
+function tcRelaysPts(pool, members, sexKey){
+  const det = []; let tot = 0;
+  const l50 = members.map(sw => (poolGet(pool, sw, 50, 0) || {}).t).filter(Boolean).sort((a,b) => a-b);
+  if (l50.length >= 7) {
+    const sum = l50.reduce((a,b) => a+b, 0) + (Math.max(members.length,10) - l50.length) * Math.round(l50[l50.length-1] * 1.05);
+    const p = relayCotPoints("10x50NL|" + sexKey, sum) || 0;
+    tot += p; det.push({lab: "10×50 NL", cs: sum, p, est: l50.length < members.length});
+  } else det.push({lab: "10×50 NL", cs: null, p: 0});
+  const l200 = members.map(sw => (poolGet(pool, sw, 200, 0) || {}).t).filter(Boolean).sort((a,b) => a-b).slice(0, 4);
+  if (l200.length === 4) {
+    const sum = l200.reduce((a,b) => a+b, 0);
+    const p = relayCotPoints("4x200NL|" + sexKey, sum) || 0;
+    tot += p; det.push({lab: "4×200 NL", cs: sum, p});
+  } else det.push({lab: "4×200 NL", cs: null, p: 0});
+  const t4 = bestRelay(pool, members.map(i => ({i})), {stroke: "MEDLEY", dist: 100, legs: 4, comp: sexKey}, null);
+  if (t4) { const p = relayCotPoints("4x1004N|" + sexKey, t4.total) || 0; tot += p; det.push({lab: "4×100 4N", cs: t4.total, p}); }
+  else det.push({lab: "4×100 4N", cs: null, p: 0});
+  return {tot, det};
+}
+// 🏆 optimisation globale : équipe de 10 maximisant points individuels + points des 3 relais (recherche par échanges)
+function bestTeamGlobal(pool, cands, preset, sexKey){
+  const events = preset.ind.map(([d, st]) => ({d, st}));
+  const base = bestTeamOneEach(pool, cands, preset);
+  const finish = r => { r.rel = tcRelaysPts(pool, [...r.team], sexKey); r.grand = r.total + r.rel.tot; return r; };
+  if (base.team.size < preset.size || cands.length <= preset.size) return finish(base);
+  const val = c => Math.max(0, ...events.map(ev => { const g = poolGet(pool, c.i, ev.d, ev.st); return g ? g.p : 0; }),
+    (poolGet(pool, c.i, 50, 0) || {}).p || 0, (poolGet(pool, c.i, 200, 0) || {}).p || 0);
+  const poolC = cands.slice().sort((a,b) => val(b) - val(a)).slice(0, 35).map(c => c.i);
+  const evalT = mem => { const ind = tcIndBestPts(pool, mem, events); return ind.cnt * 1e6 + ind.pts + tcRelaysPts(pool, mem, sexKey).tot; };
+  let team = [...base.team], cur = evalT(team), guard = 0;
+  while (guard++ < 8) {
+    let best = null;
+    for (let i = 0; i < team.length; i++) {
+      for (const y of poolC) {
+        if (team.includes(y)) continue;
+        const t2 = team.slice(); t2[i] = y;
+        const v = evalT(t2);
+        if (v > cur + 0.5 && (!best || v > best.v)) best = {v, t2};
+      }
+    }
+    if (!best) break;
+    team = best.t2; cur = best.v;
+  }
+  return finish(bestTeamOneEach(pool, team.map(i => ({i})), preset));
+}
 function bestTeam(pool, cands, preset){
   const events = preset.ind.map(([d, st]) => ({d, st}));
   const totalSlots = preset.size * preset.maxRaces;
@@ -879,6 +1001,7 @@ function renderTeam(){
       <select onchange="window._tc('preset',this.value)">${Object.entries(PRESETS).map(([k,p])=>`<option value="${k}" ${tc2.preset===k?"selected":""}>${p.label}</option>`).join("")}</select>
       ${isPlew ? '<span class="tag" style="align-self:center">équipes mixtes 4 F + 4 G (règlement)</span>' :
       `<select onchange="window._tc('sex',this.value)"><option value="F" ${tc2.sex==="F"?"selected":""}>Filles</option><option value="M" ${tc2.sex==="M"?"selected":""}>Garçons</option></select>`}
+      ${PRESETS[tc2.preset].oneEach ? `<button class="chip" style="${state.tcGlobal ? "background:var(--accent);color:#fff;border-color:var(--accent)" : ""}" onclick="window._tcG()" title="Cherche l'équipe qui maximise le total points individuels + points des 3 relais (table des relais étalonnée sur les Interclubs 2025)">🏆 Optim. globale (ind. + relais)${state.tcGlobal ? " ✓" : ""}</button>` : ""}
     </div></div>`;
   }
   h += `</div></div>`;
@@ -922,7 +1045,10 @@ function renderTeam(){
     const roster = rosterFor(pool, tc2.sex);
     h += rsPanelHtml(roster);
     const cands = roster.filter(x => !state.relaySelActive || state.relaySel.has(x.i));
-    const res = bestTeam(pool, cands, preset);
+    const res = preset.oneEach
+      ? (state.tcGlobal ? bestTeamGlobal(pool, cands, preset, tc2.sex)
+                        : (r => { r.rel = tcRelaysPts(pool, [...r.team], tc2.sex); r.grand = r.total + r.rel.tot; return r; })(bestTeamOneEach(pool, cands, preset)))
+      : bestTeam(pool, cands, preset);
     if (!res.assign.length) h += `<div class="empty">Aucune affectation possible (élargissez les filtres).</div>`;
     else {
       h += `<h3 style="font-size:14px;margin:14px 0 6px">Courses individuelles — <span style="color:var(--accent)">${res.total} points</span> · équipe de ${res.team.size} nageur(s)</h3>
@@ -943,13 +1069,26 @@ function renderTeam(){
           }
           return;
         }
+        if (r0.stroke === "FREE" && r0.legs >= preset.size) {
+          // relais "toute l'équipe" (ex. 10×50 NL) : chaque membre y participe, temps connus affichés
+          const list = teamCands.map(x => ({sw: x.i, t: (poolGet(pool, x.i, r0.dist, 0) || {}).t})).filter(x => x.t).sort((a,b) => a.t - b.t);
+          if (list.length) {
+            h += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} NL (toute l'équipe) — <span style="color:var(--accent)">Σ ${fmtTime(list.reduce((a,x) => a + x.t, 0))}</span>${list.length < r0.legs ? ` <span class="tag">${list.length}/${r0.legs} temps connus</span>` : ""}</h3>
+            <p class="count">${list.map(x => s.swimmers[x.sw][0] + " (" + fmtTime(x.t) + ")").join(" · ")}</p>`;
+          }
+          return;
+        }
         const t = bestRelay(pool, teamCands, cfg, null);
         if (t) {
           h += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} ${r0.stroke==="FREE"?"NL":"4 Nages"} (avec l'équipe) — <span style="color:var(--accent)">Σ ${fmtTime(t.total)}</span></h3>
           <p class="count">${t.legs.map(l => s.swimmers[l.sw][0] + " — " + STROKES[l.stroke] + " (" + fmtTime(l.time) + ")").join(" · ")}</p>`;
         }
       });
-      h += `<p class="count" style="margin-top:10px">Objectifs : points individuels maximisés (max ${preset.maxRaces} courses/nageur, ${preset.size} nageurs), relais au chrono minimal composés avec l'équipe retenue. Ajustez le vivier avec les filtres généraux (clubs, années, catégories…).</p>`;
+      if (res.rel) {
+        h += `<h3 style="font-size:14.5px;margin:16px 0 4px">🏆 Total équipe ≈ <span style="color:var(--accent)">${res.grand} pts</span> — individuel ${res.total} + relais ≈ ${res.rel.tot}</h3>
+        <p class="count">${res.rel.det.map(d => d.lab + " : " + (d.cs ? "≈ " + d.p + " pts (Σ " + fmtTime(d.cs) + (d.est ? ", temps manquants estimés" : "") + ")" : "incomplet — 0 pt")).join(" · ")} — points des relais interpolés d'après la table FFN relevée aux Interclubs 2025.</p>`;
+      }
+      h += `<p class="count" style="margin-top:10px">${preset.oneEach ? `Règlement : équipe de ${preset.size} nageurs, chacun nage exactement 1 épreuve individuelle (affectation optimale aux points) + le relais 10×50 NL ; relais composés avec l'équipe retenue.` : `Objectifs : points individuels maximisés (max ${preset.maxRaces} courses/nageur, ${preset.size} nageurs), relais au chrono minimal composés avec l'équipe retenue.`} Ajustez le vivier avec les filtres généraux (clubs, années, catégories…).</p>`;
     }
   }
   document.getElementById("tableZone").innerHTML = h;
@@ -968,6 +1107,7 @@ window._rsFilter = q => { q = (q || "").toLowerCase(); document.querySelectorAll
 window._rsApply = () => { state._rsOpen = true; render(); };
 window._licTog = () => { state.licOnly = !state.licOnly; state._rsOpen = true; render(); };
 window._tc = (k, v) => { state.teamCfg[k] = v; render(); };
+window._tcG = () => { state.tcGlobal = !state.tcGlobal; render(); };
 
 function render(){
   if (state.view === "team") { renderTeam(); return; }
