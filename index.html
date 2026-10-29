@@ -232,6 +232,7 @@ function defaultState(){
     relayCfg: {stroke: "FREE", legs: 4, dist: 50, comp: "F"},
     relaySel: new Set(),
     relaySelActive: false,
+    licOnly: false,
     _rsOpen: false,
     teamCfg: {preset: "u11", sex: "F"},
     sort: {key:"pts", dir:-1},
@@ -824,6 +825,35 @@ function renderPlew(pool, h){
   if (t2) h += teamBlock(t2, 2, excl2).html;
   return h;
 }
+const CNBV_LIC_2027 = new Set("110685,565601,1634709,3178561,3178571,3505227,3507099,3511273,3654645,3949776,3949782,3976414,3996437,3996479,4027293,4109146,4109291,4109294,4109308,4109321,4140411,4160959,4162132,4257518,4257549,4257550,4257560,4257563,4262118,4337957,4346745,4346766,4346771,4346783,4346815,4346830,4346837,4346850,4346861,4346883,4348883,4412737,4412738,4412752,4412756,4412758,4416968,4416973,4416974,4416975,4443558,4443566,4443567,4458791,4462677,4462678,4462681,4462682,4462683,4464194,4464199,4464201,4464203,4464208,4551022,4558456,4558458,4558466,4558467,4558470,4558471,4558473,4563468,4563469,4563476,4588665,4588727,4588728,4588736,4589658,4589659,4589660,4589661,4589662,4589664,4589665,4594436,4596354,4596366,4596373,4596375,4596376,4596377,4596378,4596380,4596381,4596382,4596383,4596384,4596385,4596386,4596387,4599453,4599456,4599465".split(","));  // licenciés CNBV saison 2026-2027 (CSV du 13/10/2026, 105 IUF)
+function rosterFor(pool, sexe){
+  const inP = new Set();
+  pool.forEach((v, k) => inP.add(+k.split("|")[0]));
+  let roster = eligibleSwimmers(sexe).filter(x => inP.has(x.i));
+  if (state.licOnly) roster = roster.filter(x => x.w[5] && CNBV_LIC_2027.has(String(x.w[5])));
+  roster.sort((a,b) => (a.w[0] + " " + a.w[1]).localeCompare(b.w[0] + " " + b.w[1], "fr"));
+  window._rsRoster = roster.map(x => x.i);
+  if (state.relaySelActive && state.relaySel) for (const iR of [...state.relaySel]) if (!inP.has(iR)) state.relaySel.delete(iR);
+  return roster;
+}
+function rsPanelHtml(roster){
+  const nSel = state.relaySelActive ? roster.filter(x => state.relaySel.has(x.i)).length : roster.length;
+  return `<div class="panel"><details ${state._rsOpen ? "open" : ""} ontoggle="state._rsOpen=this.open">
+    <summary class="dd-btn" style="cursor:pointer;display:inline-block">🏊 Nageurs du vivier : <b id="rsCount">${state.relaySelActive ? nSel + " choisi(s)" : "tous (" + roster.length + ")"}</b> ▾</summary>
+    <div style="margin-top:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
+        <input placeholder="Rechercher un nom…" oninput="window._rsFilter(this.value)" style="min-width:200px">
+        <button class="chip" onclick="window._rsMode('all')">Tout cocher</button>
+        <button class="chip" onclick="window._rsMode('none')">Tout décocher</button>
+        <button class="chip" style="${state.licOnly ? "background:var(--accent);color:#fff;border-color:var(--accent)" : ""}" onclick="window._licTog()" title="Ne garder que les 105 licenciés CNBV de la saison 2026-2027 (liste du 13/10/2026)">🪪 Licenciés CNBV 2026-2027${state.licOnly ? " ✓" : ""}</button>
+        <button class="chip" style="font-weight:700;border-color:var(--accent)" onclick="window._rsApply()">✓ Recalculer</button>
+      </div>
+      <div id="rsList" style="max-height:290px;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:3px 14px">
+        ${roster.map(x => `<label style="display:flex;gap:7px;align-items:center;cursor:pointer"><input type="checkbox" ${(!state.relaySelActive || state.relaySel.has(x.i)) ? "checked" : ""} onchange="window._rsTog(${x.i}, this.checked)"> <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.w[0]} ${x.w[1]}</span> <span class="tag ${x.w[2]==='F'?'sexF':'sexM'}">${x.w[2]==='F'?'F':'G'}</span> <span class="tag">${x.w[3] ?? "?"}</span></label>`).join("")}
+      </div>
+    </div>
+  </details></div>`;
+}
 function renderTeam(){
   const s = S();
   document.getElementById("stats").innerHTML = "";
@@ -856,28 +886,8 @@ function renderTeam(){
   if (state.teamMode === "relay") {
     if (rc.stroke === "MEDLEY" && rc.legs != 4) { h += `<div class="empty">Le relais 4 Nages se nage à 4 relayeurs.</div>`; }
     else {
-      const inPoolR = new Set();
-      pool.forEach((v, k) => inPoolR.add(+k.split("|")[0]));
-      const roster = eligibleSwimmers(rc.comp === "X" ? "X" : rc.comp)
-        .filter(x => inPoolR.has(x.i))
-        .sort((a,b) => (a.w[0] + " " + a.w[1]).localeCompare(b.w[0] + " " + b.w[1], "fr"));
-      window._rsRoster = roster.map(x => x.i);
-      if (state.relaySelActive && state.relaySel) for (const iR of [...state.relaySel]) if (!inPoolR.has(iR)) state.relaySel.delete(iR);
-      const nSel = state.relaySelActive ? roster.filter(x => state.relaySel.has(x.i)).length : roster.length;
-      h += `<div class="panel"><details ${state._rsOpen ? "open" : ""} ontoggle="state._rsOpen=this.open">
-        <summary class="dd-btn" style="cursor:pointer;display:inline-block">🏊 Nageurs du vivier : <b id="rsCount">${state.relaySelActive ? nSel + " choisi(s)" : "tous (" + roster.length + ")"}</b> ▾</summary>
-        <div style="margin-top:8px">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
-            <input placeholder="Rechercher un nom…" oninput="window._rsFilter(this.value)" style="min-width:200px">
-            <button class="chip" onclick="window._rsMode('all')">Tout cocher</button>
-            <button class="chip" onclick="window._rsMode('none')">Tout décocher</button>
-            <button class="chip" style="font-weight:700;border-color:var(--accent)" onclick="window._rsApply()">✓ Recalculer les relais</button>
-          </div>
-          <div id="rsList" style="max-height:290px;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:3px 14px">
-            ${roster.map(x => `<label style="display:flex;gap:7px;align-items:center;cursor:pointer"><input type="checkbox" ${(!state.relaySelActive || state.relaySel.has(x.i)) ? "checked" : ""} onchange="window._rsTog(${x.i}, this.checked)"> <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.w[0]} ${x.w[1]}</span> <span class="tag ${x.w[2]==='F'?'sexF':'sexM'}">${x.w[2]==='F'?'F':'G'}</span> <span class="tag">${x.w[3] ?? "?"}</span></label>`).join("")}
-          </div>
-        </div>
-      </details></div>`;
+      const roster = rosterFor(pool, rc.comp === "X" ? "X" : rc.comp);
+      h += rsPanelHtml(roster);
       const cands = roster.filter(x => !state.relaySelActive || state.relaySel.has(x.i));
       if (rc.comp === "X" && rc.legs % 2) h += `<div class="empty">En mixte, choisissez un nombre pair de relayeurs (moitié dames, moitié messieurs).</div>`;
       else {
@@ -909,7 +919,9 @@ function renderTeam(){
     return;
   } else {
     const preset = PRESETS[tc2.preset];
-    const cands = eligibleSwimmers(tc2.sex);
+    const roster = rosterFor(pool, tc2.sex);
+    h += rsPanelHtml(roster);
+    const cands = roster.filter(x => !state.relaySelActive || state.relaySel.has(x.i));
     const res = bestTeam(pool, cands, preset);
     if (!res.assign.length) h += `<div class="empty">Aucune affectation possible (élargissez les filtres).</div>`;
     else {
@@ -954,6 +966,7 @@ window._rsTog = (i, ck) => {
 window._rsMode = m => { state._rsOpen = true; state.relaySelActive = (m !== "all"); state.relaySel = new Set(); render(); };
 window._rsFilter = q => { q = (q || "").toLowerCase(); document.querySelectorAll("#rsList label").forEach(l => { l.style.display = l.textContent.toLowerCase().includes(q) ? "" : "none"; }); };
 window._rsApply = () => { state._rsOpen = true; render(); };
+window._licTog = () => { state.licOnly = !state.licOnly; state._rsOpen = true; render(); };
 window._tc = (k, v) => { state.teamCfg[k] = v; render(); };
 
 function render(){
