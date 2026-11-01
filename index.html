@@ -234,6 +234,7 @@ function defaultState(){
     relaySelActive: false,
     licOnly: false,
     tcGlobal: false,
+    estim: loadEstim(),
     _rsOpen: false,
     teamCfg: {preset: "u11", sex: "F"},
     sort: {key:"pts", dir:-1},
@@ -948,14 +949,96 @@ function renderPlew(pool, h){
   return h;
 }
 const CNBV_LIC_2027 = new Set("110685,565601,1634709,3178561,3178571,3505227,3507099,3511273,3654645,3949776,3949782,3976414,3996437,3996479,4027293,4109146,4109291,4109294,4109308,4109321,4140411,4160959,4162132,4257518,4257549,4257550,4257560,4257563,4262118,4337957,4346745,4346766,4346771,4346783,4346815,4346830,4346837,4346850,4346861,4346883,4348883,4412737,4412738,4412752,4412756,4412758,4416968,4416973,4416974,4416975,4443558,4443566,4443567,4458791,4462677,4462678,4462681,4462682,4462683,4464194,4464199,4464201,4464203,4464208,4551022,4558456,4558458,4558466,4558467,4558470,4558471,4558473,4563468,4563469,4563476,4588665,4588727,4588728,4588736,4589658,4589659,4589660,4589661,4589662,4589664,4589665,4594436,4596354,4596366,4596373,4596375,4596376,4596377,4596378,4596380,4596381,4596382,4596383,4596384,4596385,4596386,4596387,4599453,4599456,4599465".split(","));  // licenciés CNBV saison 2026-2027 (CSV du 13/10/2026, 105 IUF)
+const CNBV_ROSTER = [["AGEDA","Salim","M",2017,"4109291"],["AGEDA","Samia","F",2011,"3178571"],["AGEDA","Sinan","M",2020,"4558466"],["AGEDA","Souleyman","M",2015,"3654645"],["AKAR","Muhammed Emin","M",2017,"4589665"],["ARAB","Mélya","F",2017,"4589659"],["ARAB","Sanna","F",2019,"4589658"],["AYDEMIR","Zümra","F",2018,"4462678"],["AYVERDI","Mustafa","M",2013,"4109146"],["AZEKRI","Haroun","M",2010,"3505227"],["AZEKRI","Nizar","M",2016,"3949776"],["AZEKRI","Soundous","F",2017,"4109321"],["BARENDJI","Houcine","M",2007,"3976414"],["BASCEYHAN","Seda","F",2012,"4346850"],["BATTISTELLI","Boris","M",2007,"1634709"],["BEAUFILS","Liam","M",2016,"4551022"],["BELADGHAM","Amine","M",2018,"4257518"],["BELLAMMOU","Haroun","M",2015,"3949782"],["BELLAMMOU","Myriam","F",2019,"4558473"],["BENSALLAH","Alyssa","F",2019,"4462682"],["BENSALLAH","Jasmine","F",2018,"4462683"],["BINDI","Lalie","F",2018,"4589661"],["BOUDJEKADA","Amine","M",2006,"4337957"],["BOURGES SÉGOUIN","Katell","F",2011,"4588665"],["BOUTELDJA","Ayem","F",2014,"4140411"],["BOUZZIT","Ferdawsse","F",2016,"4257549"],["BOUZZIT","Sayf-Dine","M",2018,"4257550"],["BROUILLET DE NEGRI","Enzo","M",2015,"4346771"],["BULUT","Asiya","F",2018,"4596373"],["CESTER LOPEZ","Samantha","F",2015,"4596386"],["CH HIBY","Sara","F",2018,"4596378"],["CHAMPCLOS","Manon","F",2019,"4416973"],["CHANBOUR","Ayman","M",2018,"4589664"],["CHATARD","Amna","F",2021,"4596375"],["CHATARD","Jad","M",2018,"4596387"],["COPPEL","Eden","M",2017,"4458791"],["COPPOLA","Edoardo Antonio","M",2017,"4588736"],["COSKUN","Zumra","F",2011,"4596354"],["CURA-CURA","Clelia","F",2018,"4443558"],["DAMIER","Daïley","M",2016,"4416968"],["DEBOVE","Louise","F",2009,"3178561"],["DELESTRE","Jeanne","F",2012,"4599453"],["DELWALLE","Kilyan","M",2015,"4412738"],["DELWALLE","Luna","F",2018,"4412737"],["DENES","Louwan","F",2017,"4109308"],["DINGER","Musa","M",2013,"4348883"],["DINGER","Yigit","M",2016,"4346861"],["DOS SANTOS SALGADO","Constança","F",2010,"4599456"],["DUCOTTET","Marie","F",2013,"4464203"],["DUHAMEL","Kévin","M",2016,"4596381"],["DUHAMEL","Léo","M",2014,"4443566"],["DUTHUILLE","Jain-Ameena","F",2019,"4412756"],["DUTHUILLE","Marie-Jasmeen","F",2017,"4346745"],["EL HAJOUI","Adam","M",2020,"4563468"],["EL MOUSTAKIM","Soltan","M",2017,"4109294"],["ERDOGAN","Aylin","F",2019,"4558467"],["FAMY","Celia","F",2018,"4596382"],["FERRANTE","Nicola","M",2018,"4596376"],["FRANCOIS","Wendy","F",2019,"4563469"],["FROMENTIN","Recky","M",2014,"4346830"],["GARBE","Sophie","F",2014,"4346766"],["GRANDCLEMENT","Maya","F",2019,"4412758"],["GUIMBERT","Hélios","M",2020,"4596377"],["HAMDANI","Aya","F",2017,"4257560"],["HAMDANI","Imran","M",2018,"4257563"],["HAMICH","Kahil","M",2022,"4558458"],["HAMICH","Qassim","M",2020,"4558456"],["JOAN","Louèn","M",2014,"4588728"],["LAAROUSSI","Maryam","F",2020,"4462681"],["LEFEBVRE-OURIET","Taina","F",2017,"4594436"],["LIGUORI","Asya","F",2013,"3511273"],["LUNA","Delwalle","F",2018,"4462677"],["MARCHAND","Anaya","F",2018,"4464194"],["MARIANO","Lyana","F",2016,"4589660"],["MOJAHED","Taha","M",2017,"4162132"],["MONG","Nefertiti-Ethiopia","F",2018,"4596384"],["MONTMARON","Florine","F",1995,"4596366"],["NICCO","Tyago","M",2017,"4464201"],["OZBAHAR","Ayla","F",2016,"4416974"],["OZBAHAR","Aylin","F",2019,"4416975"],["PENIN","Chrystele","F",1975,"4346883"],["PENIN","Clarisse","F",2015,"4464208"],["PENIN","Penelope","F",2013,"3996479"],["PEÃO CALUNGA","Marielle Eloa","F",2019,"4589662"],["POMERET","Lucile","F",2014,"3507099"],["REBUCINI","Zélie","F",2015,"3996437"],["SHAÏTY","Jassim","M",2013,"4563476"],["SILVA","Bianca","F",2019,"4596383"],["SIRANLI","Melih","M",2016,"4346783"],["SKIBINSKI","Marine","F",1990,"4599465"],["SOLOVYANOV","Alexander","M",2012,"4027293"],["SUAIS","Ethan","M",2015,"4160959"],["SZARAZ","Neyla","F",2019,"4412752"],["TREMBELLAND","Anaé","F",2020,"4596380"],["TRIC","Bastien","M",2026,"4588727"],["TRIHI","Omar","M",2018,"4596385"],["TRUCHE","Caroline","F",1987,"110685"],["TRUCHE","Jean-Pierre","M",1955,"565601"],["VARSALONA","Greta","F",2017,"4464199"],["VIONNET","Mathilde","F",2016,"4262118"],["VIRGINIE","Paloma","F",2013,"4346837"],["WINKELMANN","Calie","F",2012,"4443567"],["ZAÏTER","Hanna","F",2014,"4346815"],["ZOGHLAMI","Ishaac","M",2015,"4558470"],["ZOGHLAMI","Iyed","M",2020,"4558471"]]; // licenciés CNBV 2026-2027 (CSV du 13/10/2026) — sexe déduit base/adhérents/prénom
+// injecte dans la base les licenciés CNBV sans aucun résultat (club CN BELLEGARDE), pour qu'ils soient proposés
+function ensureRoster(){
+  const have = new Set(DATA.swimmers.map(w => String(w[5])));
+  let ci = DATA.clubs.indexOf("CN BELLEGARDE");
+  if (ci < 0) { ci = DATA.clubs.length; DATA.clubs.push("CN BELLEGARDE"); }
+  for (const [ln, fn, sex, by, iuf] of CNBV_ROSTER) {
+    if (have.has(iuf)) continue;
+    DATA.swimmers.push([ln, fn, sex, by || null, ci, iuf]);
+    have.add(iuf);
+  }
+}
+// — estimations pour nageurs sans chrono officiel : state.estim[iuf]["dist|stroke"] = "+" (autorisée) ou "m:ss.cc" (chrono estimé)
+function loadEstim(){ try { return JSON.parse(localStorage.getItem("ain_estim") || "{}") || {}; } catch(e) { return {}; } }
+function saveEstim(){ try { localStorage.setItem("ain_estim", JSON.stringify(state.estim || {})); } catch(e) {} }
+// règles par défaut : plus âgé (jusqu'à 45 ans) = plus polyvalent ; débutant = crawl, puis dos et brasse
+function estimDefaults(by, progKeys){
+  const a = by ? (refYear() - by) : 0;
+  let ok;
+  if (a >= 18 && a <= 45) ok = progKeys.slice();
+  else if (a >= 14) ok = ["100|0","400|0","100|1","200|1","100|2","200|2","100|4"];
+  else if (a >= 12) ok = ["100|0","100|1","100|2"];
+  else ok = ["100|0"];
+  return ok.filter(k => progKeys.includes(k));
+}
+// points FFN estimés pour un temps donné : interpolation sur les résultats réels de la base (même épreuve, même sexe, 25 m)
+function estPointsFromData(d, st, sex, cs){
+  window._estCache = window._estCache || {};
+  const key = d + "|" + st + "|" + sex;
+  if (!window._estCache[key]) {
+    const pairs = [];
+    for (const r of DATA.results) {
+      if (r[R.DIST] !== d || r[R.STROKE] !== st || r[R.COURSE] !== 0 || !r[R.PTS]) continue;
+      if (DATA.swimmers[r[R.SW]][2] !== sex) continue;
+      pairs.push([r[R.TIME], r[R.PTS]]);
+    }
+    pairs.sort((a,b) => a[0] - b[0]);
+    window._estCache[key] = pairs;
+  }
+  const tab = window._estCache[key];
+  if (tab.length < 3) return 1;
+  if (cs <= tab[0][0]) return tab[0][1];
+  if (cs >= tab[tab.length-1][0]) return Math.max(1, tab[tab.length-1][1]);
+  for (let i = 1; i < tab.length; i++) if (cs <= tab[i][0]) {
+    const [c0,p0] = tab[i-1], [c1,p1] = tab[i];
+    return Math.max(1, Math.round(c1 === c0 ? p0 : p0 + (p1-p0) * (cs-c0) / (c1-c0)));
+  }
+  return 1;
+}
+// pool enrichi des estimations (épreuves autorisées et chronos estimés) pour le composeur Interclubs
+function buildEstimPool(pool, cands, preset){
+  const progKeys = preset.ind.map(([d, st]) => d + "|" + st);
+  const poolU = new Map(pool);
+  window._estRows = [];
+  for (const c of cands) {
+    const w = S().swimmers[c.i];
+    const hasChrono = progKeys.some(k => { const [d, st] = k.split("|").map(Number); return !!poolGet(pool, c.i, d, st); });
+    if (hasChrono) continue;
+    const iuf = String(w[5] || "");
+    if (!state.estim[iuf]) {
+      state.estim[iuf] = {};
+      for (const k of estimDefaults(w[3], progKeys)) state.estim[iuf][k] = "+";
+    }
+    window._estRows.push({i: c.i, iuf});
+    const a = w[3] ? Math.min(refYear() - w[3], 45) : 0;
+    for (const [k, val] of Object.entries(state.estim[iuf])) {
+      if (!progKeys.includes(k) || !val) continue;
+      const [d, st] = k.split("|").map(Number);
+      if (poolGet(poolU, c.i, d, st)) continue;
+      const cs = parseUserTime(String(val).trim());
+      if (cs) poolU.set(c.i + "|" + d + "|" + st, {t: cs, p: estPointsFromData(d, st, w[2], cs), est: true});
+      else if (String(val).trim()) poolU.set(c.i + "|" + d + "|" + st, {t: null, p: 0.01 + a * 0.0001, est: true});
+    }
+  }
+  return poolU;
+}
 function rosterFor(pool, sexe){
   const inP = new Set();
   pool.forEach((v, k) => inP.add(+k.split("|")[0]));
-  let roster = eligibleSwimmers(sexe).filter(x => inP.has(x.i));
-  if (state.licOnly) roster = roster.filter(x => x.w[5] && CNBV_LIC_2027.has(String(x.w[5])));
+  let roster;
+  if (state.licOnly) {
+    ensureRoster(); // tous les licenciés CNBV 2026-2027 sont proposés, même sans résultat officiel
+    roster = eligibleSwimmers(sexe).filter(x => x.w[5] && CNBV_LIC_2027.has(String(x.w[5])));
+  } else {
+    roster = eligibleSwimmers(sexe).filter(x => inP.has(x.i));
+  }
   roster.sort((a,b) => (a.w[0] + " " + a.w[1]).localeCompare(b.w[0] + " " + b.w[1], "fr"));
   window._rsRoster = roster.map(x => x.i);
-  if (state.relaySelActive && state.relaySel) for (const iR of [...state.relaySel]) if (!inP.has(iR)) state.relaySel.delete(iR);
+  const okIdx = new Set(roster.map(x => x.i));
+  if (state.relaySelActive && state.relaySel) for (const iR of [...state.relaySel]) if (!okIdx.has(iR) && !inP.has(iR)) state.relaySel.delete(iR);
   return roster;
 }
 function rsPanelHtml(roster){
@@ -1045,25 +1128,56 @@ function renderTeam(){
     const roster = rosterFor(pool, tc2.sex);
     h += rsPanelHtml(roster);
     const cands = roster.filter(x => !state.relaySelActive || state.relaySel.has(x.i));
+    const poolU = preset.oneEach ? buildEstimPool(pool, cands, preset) : pool;
+    if (preset.oneEach && (window._estRows || []).length) {
+      const progKeys = preset.ind.map(([d, st]) => d + "|" + st);
+      const s2 = S();
+      h += `<div class="panel"><details ${state._estOpen ? "open" : ""} ontoggle="state._estOpen=this.open">
+        <summary class="dd-btn" style="cursor:pointer;display:inline-block">🎯 Épreuves & estimations — <b>${window._estRows.length}</b> nageur(s) sans chrono officiel ▾</summary>
+        <div style="margin-top:8px">
+          <p class="count" style="margin:4px 0 8px">Dans chaque case : vide = épreuve non retenue · <b>+</b> = le nageur peut la nager (sans chrono : il servira à compléter) · un chrono estimé (ex. <b>1:25.5</b>) = converti en points FFN et intégré à la stratégie. Pré-rempli selon l'âge (plus âgé jusqu'à 45 ans = plus polyvalent ; jeune débutant = crawl, puis dos/brasse). <button class="chip" style="font-weight:700;border-color:var(--accent)" onclick="window._estGo()">✓ Recalculer l'équipe</button></p>
+          <div style="max-height:320px;overflow:auto"><table><thead><tr><th>Nageur</th><th>Âge</th>${progKeys.map(k => { const [d, st] = k.split("|").map(Number); return `<th style="text-align:center">${d} ${st===0?"NL":STROKES[st].replace("Papillon","Pap.").replace("4 Nages","4N")}</th>`; }).join("")}</tr></thead><tbody>
+          ${window._estRows.map(e => { const w = s2.swimmers[e.i]; const est = state.estim[e.iuf] || {};
+            return `<tr><td class="name" style="white-space:nowrap"><b>${w[0]}</b> ${w[1]} <span class="tag ${w[2]==='F'?'sexF':'sexM'}">${w[2]==='F'?'F':'G'}</span></td><td>${w[3] ? refYear() - w[3] : "?"}</td>${progKeys.map(k =>
+              `<td style="text-align:center"><input value="${(est[k] || "").replace(/"/g,"")}" onchange="window._estSet('${e.iuf}','${k}',this.value)" style="width:58px;text-align:center;padding:4px 3px" placeholder="–"></td>`).join("")}</tr>`; }).join("")}
+          </tbody></table></div>
+        </div>
+      </details></div>`;
+    }
     const res = preset.oneEach
-      ? (state.tcGlobal ? bestTeamGlobal(pool, cands, preset, tc2.sex)
-                        : (r => { r.rel = tcRelaysPts(pool, [...r.team], tc2.sex); r.grand = r.total + r.rel.tot; return r; })(bestTeamOneEach(pool, cands, preset)))
+      ? (state.tcGlobal ? bestTeamGlobal(poolU, cands, preset, tc2.sex)
+                        : (r => { r.rel = tcRelaysPts(poolU, [...r.team], tc2.sex); r.grand = r.total + r.rel.tot; return r; })(bestTeamOneEach(poolU, cands, preset)))
       : bestTeam(pool, cands, preset);
+    if (preset.oneEach && res.team.size < preset.size) {
+      // compléter l'équipe à 10 quoi qu'il arrive : meilleurs restants (points, puis âge jusqu'à 45 ans)
+      const scoreFill = c => { let b = 0; for (const [d, st] of preset.ind) { const g = poolGet(poolU, c.i, d, st); if (g && g.p > b) b = g.p; } const g50 = poolGet(poolU, c.i, 50, 0); if (g50 && g50.p > b) b = g50.p; return b + (S().swimmers[c.i][3] ? Math.min(refYear() - S().swimmers[c.i][3], 45) * 0.01 : 0); };
+      res.fill = cands.filter(c => !res.team.has(c.i)).sort((a,b) => scoreFill(b) - scoreFill(a)).slice(0, preset.size - res.team.size).map(c => c.i);
+      res.fill.forEach(i => res.team.add(i));
+      res.rel = tcRelaysPts(poolU, [...res.team], tc2.sex);
+      res.grand = res.total + res.rel.tot;
+    }
     if (!res.assign.length) h += `<div class="empty">Aucune affectation possible (élargissez les filtres).</div>`;
     else {
-      h += `<h3 style="font-size:14px;margin:14px 0 6px">Courses individuelles — <span style="color:var(--accent)">${res.total} points</span> · équipe de ${res.team.size} nageur(s)</h3>
+      h += `<h3 style="font-size:14px;margin:14px 0 6px">Courses individuelles — <span style="color:var(--accent)">${Math.round(res.total)} points</span> · équipe de ${res.team.size} nageur(s)</h3>
       <table><thead><tr><th>Épreuve</th><th>Nageur</th><th>Année</th><th>Points</th><th>Temps</th></tr></thead><tbody>`;
       res.assign.sort((a,b) => a.ei - b.ei).forEach(a => {
         const ev = res.events[a.ei], w = s.swimmers[a.sw];
-        const g = poolGet(pool, a.sw, ev.d, ev.st);
-        h += `<tr data-sw="${a.sw}"><td>${ev.d} m ${STROKES[ev.st]}</td><td class="name">${swName(a.sw)}</td><td>${w[3]}</td><td class="pts">${a.pts}</td><td class="time">${g ? fmtTime(g.t) : "—"}</td></tr>`; });
+        const g = poolGet(preset.oneEach ? poolU : pool, a.sw, ev.d, ev.st);
+        const estTag = g && g.est ? ' <span class="tag" title="valeur estimée (module 🎯)">est.</span>' : "";
+        h += `<tr data-sw="${a.sw}"><td>${ev.d} m ${STROKES[ev.st]}</td><td class="name">${swName(a.sw)}</td><td>${w[3]}</td><td class="pts">${a.pts < 1 ? "—" : a.pts}${estTag}</td><td class="time">${g && g.t ? fmtTime(g.t) : "—"}</td></tr>`; });
       h += `</tbody></table>`;
+      if (preset.oneEach) {
+        const covered = new Set(res.assign.map(a => a.ei));
+        const imp = res.events.map((ev, i) => covered.has(i) ? null : ev.d + " m " + STROKES[ev.st]).filter(Boolean);
+        if (imp.length) h += `<p class="count" style="color:#b45309"><b>Épreuves sans nageur (impasse) :</b> ${imp.join(" · ")} — renseignez le module 🎯 ci-dessus pour les couvrir.</p>`;
+        if (res.fill && res.fill.length) h += `<p class="count"><b>Complément pour atteindre ${preset.size} :</b> ${res.fill.map(i => s.swimmers[i][0] + " " + s.swimmers[i][1]).join(" · ")} (relais / réserve, sans épreuve individuelle).</p>`;
+      }
       const teamCands = [...res.team].map(i => ({i, w: s.swimmers[i]}));
       preset.relays.forEach(r0 => {
         const cfg = {stroke: r0.stroke === "MEDLEY_IND" ? "MEDLEY" : r0.stroke, dist: r0.dist, legs: r0.legs, comp: tc2.sex};
         if (r0.stroke === "MEDLEY_IND") {
           // relais 4x100 4N individuel : 4 meilleurs 100 4N
-          const list = teamCands.map(x => ({sw: x.i, t: (poolGet(pool, x.i, r0.dist, 4) || {}).t})).filter(x => x.t).sort((a,b) => a.t - b.t).slice(0, r0.legs);
+          const list = teamCands.map(x => ({sw: x.i, t: (poolGet(preset.oneEach ? poolU : pool, x.i, r0.dist, 4) || {}).t})).filter(x => x.t).sort((a,b) => a.t - b.t).slice(0, r0.legs);
           if (list.length === r0.legs) {
             h += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} 4 Nages (ind.) — <span style="color:var(--accent)">Σ ${fmtTime(list.reduce((a,x)=>a+x.t,0))}</span></h3><p class="count">${list.map(x => s.swimmers[x.sw][0] + " (" + fmtTime(x.t) + ")").join(" · ")}</p>`;
           }
@@ -1071,21 +1185,21 @@ function renderTeam(){
         }
         if (r0.stroke === "FREE" && r0.legs >= preset.size) {
           // relais "toute l'équipe" (ex. 10×50 NL) : chaque membre y participe, temps connus affichés
-          const list = teamCands.map(x => ({sw: x.i, t: (poolGet(pool, x.i, r0.dist, 0) || {}).t})).filter(x => x.t).sort((a,b) => a.t - b.t);
+          const list = teamCands.map(x => ({sw: x.i, t: (poolGet(preset.oneEach ? poolU : pool, x.i, r0.dist, 0) || {}).t})).filter(x => x.t).sort((a,b) => a.t - b.t);
           if (list.length) {
             h += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} NL (toute l'équipe) — <span style="color:var(--accent)">Σ ${fmtTime(list.reduce((a,x) => a + x.t, 0))}</span>${list.length < r0.legs ? ` <span class="tag">${list.length}/${r0.legs} temps connus</span>` : ""}</h3>
             <p class="count">${list.map(x => s.swimmers[x.sw][0] + " (" + fmtTime(x.t) + ")").join(" · ")}</p>`;
           }
           return;
         }
-        const t = bestRelay(pool, teamCands, cfg, null);
+        const t = bestRelay(preset.oneEach ? poolU : pool, teamCands, cfg, null);
         if (t) {
           h += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} ${r0.stroke==="FREE"?"NL":"4 Nages"} (avec l'équipe) — <span style="color:var(--accent)">Σ ${fmtTime(t.total)}</span></h3>
           <p class="count">${t.legs.map(l => s.swimmers[l.sw][0] + " — " + STROKES[l.stroke] + " (" + fmtTime(l.time) + ")").join(" · ")}</p>`;
         }
       });
       if (res.rel) {
-        h += `<h3 style="font-size:14.5px;margin:16px 0 4px">🏆 Total équipe ≈ <span style="color:var(--accent)">${res.grand} pts</span> — individuel ${res.total} + relais ≈ ${res.rel.tot}</h3>
+        h += `<h3 style="font-size:14.5px;margin:16px 0 4px">🏆 Total équipe ≈ <span style="color:var(--accent)">${Math.round(res.grand)} pts</span> — individuel ${Math.round(res.total)} + relais ≈ ${res.rel.tot}</h3>
         <p class="count">${res.rel.det.map(d => d.lab + " : " + (d.cs ? "≈ " + d.p + " pts (Σ " + fmtTime(d.cs) + (d.est ? ", temps manquants estimés" : "") + ")" : "incomplet — 0 pt")).join(" · ")} — points des relais interpolés d'après la table FFN relevée aux Interclubs 2025.</p>`;
       }
       h += `<p class="count" style="margin-top:10px">${preset.oneEach ? `Règlement : équipe de ${preset.size} nageurs, chacun nage exactement 1 épreuve individuelle (affectation optimale aux points) + le relais 10×50 NL ; relais composés avec l'équipe retenue.` : `Objectifs : points individuels maximisés (max ${preset.maxRaces} courses/nageur, ${preset.size} nageurs), relais au chrono minimal composés avec l'équipe retenue.`} Ajustez le vivier avec les filtres généraux (clubs, années, catégories…).</p>`;
@@ -1108,6 +1222,8 @@ window._rsApply = () => { state._rsOpen = true; render(); };
 window._licTog = () => { state.licOnly = !state.licOnly; state._rsOpen = true; render(); };
 window._tc = (k, v) => { state.teamCfg[k] = v; render(); };
 window._tcG = () => { state.tcGlobal = !state.tcGlobal; render(); };
+window._estSet = (iuf, k, v) => { state.estim[iuf] = state.estim[iuf] || {}; state.estim[iuf][k] = v.trim(); saveEstim(); };
+window._estGo = () => { state._estOpen = true; render(); };
 
 function render(){
   if (state.view === "team") { renderTeam(); return; }
