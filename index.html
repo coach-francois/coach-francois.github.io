@@ -1006,15 +1006,15 @@ function buildEstimPool(pool, cands, preset){
   for (const c of cands) {
     const w = S().swimmers[c.i];
     const hasChrono = progKeys.some(k => { const [d, st] = k.split("|").map(Number); return !!poolGet(pool, c.i, d, st); });
-    if (hasChrono) continue;
     const iuf = String(w[5] || "");
-    if (!state.estim[iuf]) {
+    if (!state.estim[iuf] && !hasChrono) {
+      // pré-remplissage automatique uniquement pour les nageurs sans aucun chrono officiel
       state.estim[iuf] = {};
       for (const k of estimDefaults(w[3], progKeys)) state.estim[iuf][k] = "+";
     }
     window._estRows.push({i: c.i, iuf});
     const a = w[3] ? Math.min(refYear() - w[3], 45) : 0;
-    for (const [k, val] of Object.entries(state.estim[iuf])) {
+    for (const [k, val] of Object.entries(state.estim[iuf] || {})) {
       if (!progKeys.includes(k) || !val) continue;
       const [d, st] = k.split("|").map(Number);
       if (poolGet(poolU, c.i, d, st)) continue;
@@ -1133,13 +1133,16 @@ function renderTeam(){
       const progKeys = preset.ind.map(([d, st]) => d + "|" + st);
       const s2 = S();
       h += `<div class="panel"><details ${state._estOpen ? "open" : ""} ontoggle="state._estOpen=this.open">
-        <summary class="dd-btn" style="cursor:pointer;display:inline-block">🎯 Épreuves & estimations — <b>${window._estRows.length}</b> nageur(s) sans chrono officiel ▾</summary>
+        <summary class="dd-btn" style="cursor:pointer;display:inline-block">🎯 Épreuves & estimations — <b>${window._estRows.length}</b> nageur(s) du vivier ▾</summary>
         <div style="margin-top:8px">
-          <p class="count" style="margin:4px 0 8px">Dans chaque case : vide = épreuve non retenue · <b>+</b> = le nageur peut la nager (sans chrono : il servira à compléter) · un chrono estimé (ex. <b>1:25.5</b>) = converti en points FFN et intégré à la stratégie. Pré-rempli selon l'âge (plus âgé jusqu'à 45 ans = plus polyvalent ; jeune débutant = crawl, puis dos/brasse). <button class="chip" style="font-weight:700;border-color:var(--accent)" onclick="window._estGo()">✓ Recalculer l'équipe</button></p>
-          <div style="max-height:320px;overflow:auto"><table><thead><tr><th>Nageur</th><th>Âge</th>${progKeys.map(k => { const [d, st] = k.split("|").map(Number); return `<th style="text-align:center">${d} ${st===0?"NL":STROKES[st].replace("Papillon","Pap.").replace("4 Nages","4N")}</th>`; }).join("")}</tr></thead><tbody>
+          <p class="count" style="margin:4px 0 8px">Chronos officiels en gris (non modifiables). Dans les cases vides : <b>+</b> = le nageur peut nager l'épreuve (sans chrono : il servira à compléter) · un chrono estimé (ex. <b>1:25.5</b>) = converti en points FFN et intégré à la stratégie · vide = épreuve non retenue. Les nageurs sans aucun chrono sont pré-remplis selon l'âge. <button class="chip" style="font-weight:700;border-color:var(--accent)" onclick="window._estGo()">✓ Recalculer l'équipe</button></p>
+          <input placeholder="Rechercher un nom…" oninput="window._estFilter(this.value)" style="min-width:200px;margin-bottom:8px">
+          <div style="max-height:320px;overflow:auto"><table><thead><tr><th>Nageur</th><th>Âge</th>${progKeys.map(k => { const [d, st] = k.split("|").map(Number); return `<th style="text-align:center">${d} ${st===0?"NL":STROKES[st].replace("Papillon","Pap.").replace("4 Nages","4N")}</th>`; }).join("")}</tr></thead><tbody id="estList">
           ${window._estRows.map(e => { const w = s2.swimmers[e.i]; const est = state.estim[e.iuf] || {};
-            return `<tr><td class="name" style="white-space:nowrap"><b>${w[0]}</b> ${w[1]} <span class="tag ${w[2]==='F'?'sexF':'sexM'}">${w[2]==='F'?'F':'G'}</span></td><td>${w[3] ? refYear() - w[3] : "?"}</td>${progKeys.map(k =>
-              `<td style="text-align:center"><input value="${(est[k] || "").replace(/"/g,"")}" onchange="window._estSet('${e.iuf}','${k}',this.value)" style="width:58px;text-align:center;padding:4px 3px" placeholder="–"></td>`).join("")}</tr>`; }).join("")}
+            return `<tr><td class="name" style="white-space:nowrap"><b>${w[0]}</b> ${w[1]} <span class="tag ${w[2]==='F'?'sexF':'sexM'}">${w[2]==='F'?'F':'G'}</span></td><td>${w[3] ? refYear() - w[3] : "?"}</td>${progKeys.map(k => {
+              const [d, st] = k.split("|").map(Number);
+              const off = poolGet(pool, e.i, d, st);
+              return `<td style="text-align:center">${off ? `<span style="color:#8fa0b3;font-variant-numeric:tabular-nums" title="chrono officiel (${off.p} pts)">${fmtTime(off.t)}</span>` : `<input value="${(est[k] || "").replace(/"/g,"")}" onchange="window._estSet('${e.iuf}','${k}',this.value)" style="width:58px;text-align:center;padding:4px 3px" placeholder="–">`}</td>`; }).join("")}</tr>`; }).join("")}
           </tbody></table></div>
         </div>
       </details></div>`;
@@ -1224,6 +1227,7 @@ window._tc = (k, v) => { state.teamCfg[k] = v; render(); };
 window._tcG = () => { state.tcGlobal = !state.tcGlobal; render(); };
 window._estSet = (iuf, k, v) => { state.estim[iuf] = state.estim[iuf] || {}; state.estim[iuf][k] = v.trim(); saveEstim(); };
 window._estGo = () => { state._estOpen = true; render(); };
+window._estFilter = q => { q = (q || "").toLowerCase(); document.querySelectorAll("#estList tr").forEach(tr => { tr.style.display = (tr.cells[0].textContent || "").toLowerCase().includes(q) ? "" : "none"; }); };
 
 function render(){
   if (state.view === "team") { renderTeam(); return; }
