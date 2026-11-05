@@ -1014,8 +1014,9 @@ function buildEstimPool(pool, cands, preset){
     }
     window._estRows.push({i: c.i, iuf});
     const a = w[3] ? Math.min(refYear() - w[3], 45) : 0;
+    const allKeys = progKeys.concat(["50|0","200|0"]); // 50 et 200 NL : alimentent les relais 10×50 et 4×200
     for (const [k, val] of Object.entries(state.estim[iuf] || {})) {
-      if (!progKeys.includes(k) || !val) continue;
+      if (!allKeys.includes(k) || !val) continue;
       const [d, st] = k.split("|").map(Number);
       if (poolGet(poolU, c.i, d, st)) continue;
       const cs = parseUserTime(String(val).trim());
@@ -1131,15 +1132,16 @@ function renderTeam(){
     const poolU = preset.oneEach ? buildEstimPool(pool, cands, preset) : pool;
     if (preset.oneEach && (window._estRows || []).length) {
       const progKeys = preset.ind.map(([d, st]) => d + "|" + st);
+      const gridKeys = progKeys.concat(["50|0","200|0"]);
       const s2 = S();
       h += `<div class="panel"><details ${state._estOpen ? "open" : ""} ontoggle="state._estOpen=this.open">
         <summary class="dd-btn" style="cursor:pointer;display:inline-block">🎯 Épreuves & estimations — <b>${window._estRows.length}</b> nageur(s) du vivier ▾</summary>
         <div style="margin-top:8px">
-          <p class="count" style="margin:4px 0 8px">Chronos officiels en gris (non modifiables). Dans les cases vides : <b>+</b> = le nageur peut nager l'épreuve (sans chrono : il servira à compléter) · un chrono estimé (ex. <b>1:25.5</b>) = converti en points FFN et intégré à la stratégie · vide = épreuve non retenue. Les nageurs sans aucun chrono sont pré-remplis selon l'âge. <button class="chip" style="font-weight:700;border-color:var(--accent)" onclick="window._estGo()">✓ Recalculer l'équipe</button></p>
+          <p class="count" style="margin:4px 0 8px">Chronos officiels en gris (non modifiables). Dans les cases vides : <b>+</b> = le nageur peut nager l'épreuve (sans chrono : il servira à compléter) · un chrono estimé (ex. <b>1:25.5</b>) = converti en points FFN et intégré à la stratégie · vide = épreuve non retenue. Les nageurs sans aucun chrono sont pré-remplis selon l'âge. Les colonnes <b>⟲</b> (50 et 200 NL) servent uniquement aux relais. <button class="chip" style="font-weight:700;border-color:var(--accent)" onclick="window._estGo()">✓ Recalculer l'équipe</button></p>
           <input placeholder="Rechercher un nom…" oninput="window._estFilter(this.value)" style="min-width:200px;margin-bottom:8px">
-          <div style="max-height:320px;overflow:auto"><table><thead><tr><th>Nageur</th><th>Âge</th>${progKeys.map(k => { const [d, st] = k.split("|").map(Number); return `<th style="text-align:center">${d} ${st===0?"NL":STROKES[st].replace("Papillon","Pap.").replace("4 Nages","4N")}</th>`; }).join("")}</tr></thead><tbody id="estList">
+          <div style="max-height:320px;overflow:auto"><table><thead><tr><th>Nageur</th><th>Âge</th>${gridKeys.map(k => { const [d, st] = k.split("|").map(Number); const rel = !progKeys.includes(k); return `<th style="text-align:center;${rel ? "color:var(--accent)" : ""}" ${rel ? 'title="sert uniquement aux relais (10×50 ou 4×200 NL)"' : ""}>${d} ${st===0?"NL":STROKES[st].replace("Papillon","Pap.").replace("4 Nages","4N")}${rel ? " ⟲" : ""}</th>`; }).join("")}</tr></thead><tbody id="estList">
           ${window._estRows.map(e => { const w = s2.swimmers[e.i]; const est = state.estim[e.iuf] || {};
-            return `<tr><td class="name" style="white-space:nowrap"><b>${w[0]}</b> ${w[1]} <span class="tag ${w[2]==='F'?'sexF':'sexM'}">${w[2]==='F'?'F':'G'}</span></td><td>${w[3] ? refYear() - w[3] : "?"}</td>${progKeys.map(k => {
+            return `<tr><td class="name" style="white-space:nowrap"><b>${w[0]}</b> ${w[1]} <span class="tag ${w[2]==='F'?'sexF':'sexM'}">${w[2]==='F'?'F':'G'}</span></td><td>${w[3] ? refYear() - w[3] : "?"}</td>${gridKeys.map(k => {
               const [d, st] = k.split("|").map(Number);
               const off = poolGet(pool, e.i, d, st);
               return `<td style="text-align:center">${off ? `<span style="color:#8fa0b3;font-variant-numeric:tabular-nums" title="chrono officiel (${off.p} pts)">${fmtTime(off.t)}</span>` : `<input value="${(est[k] || "").replace(/"/g,"")}" onchange="window._estSet('${e.iuf}','${k}',this.value)" style="width:58px;text-align:center;padding:4px 3px" placeholder="–">`}</td>`; }).join("")}</tr>`; }).join("")}
@@ -1147,68 +1149,86 @@ function renderTeam(){
         </div>
       </details></div>`;
     }
-    const res = preset.oneEach
-      ? (state.tcGlobal ? bestTeamGlobal(poolU, cands, preset, tc2.sex)
-                        : (r => { r.rel = tcRelaysPts(poolU, [...r.team], tc2.sex); r.grand = r.total + r.rel.tot; return r; })(bestTeamOneEach(poolU, cands, preset)))
-      : bestTeam(pool, cands, preset);
-    if (preset.oneEach && res.team.size < preset.size) {
-      // compléter l'équipe à 10 quoi qu'il arrive : meilleurs restants (points, puis âge jusqu'à 45 ans)
-      const scoreFill = c => { let b = 0; for (const [d, st] of preset.ind) { const g = poolGet(poolU, c.i, d, st); if (g && g.p > b) b = g.p; } const g50 = poolGet(poolU, c.i, 50, 0); if (g50 && g50.p > b) b = g50.p; return b + (S().swimmers[c.i][3] ? Math.min(refYear() - S().swimmers[c.i][3], 45) * 0.01 : 0); };
-      res.fill = cands.filter(c => !res.team.has(c.i)).sort((a,b) => scoreFill(b) - scoreFill(a)).slice(0, preset.size - res.team.size).map(c => c.i);
-      res.fill.forEach(i => res.team.add(i));
-      res.rel = tcRelaysPts(poolU, [...res.team], tc2.sex);
-      res.grand = res.total + res.rel.tot;
-    }
-    if (!res.assign.length) h += `<div class="empty">Aucune affectation possible (élargissez les filtres).</div>`;
-    else {
-      h += `<h3 style="font-size:14px;margin:14px 0 6px">Courses individuelles — <span style="color:var(--accent)">${Math.round(res.total)} points</span> · équipe de ${res.team.size} nageur(s)</h3>
+    const fillTeam = (resX, avail) => {
+      if (resX.team.size >= preset.size) return;
+      const scoreFill = c => { let b2 = 0; for (const [d, st] of preset.ind) { const g = poolGet(poolU, c.i, d, st); if (g && g.p > b2) b2 = g.p; } const g50 = poolGet(poolU, c.i, 50, 0); if (g50 && g50.p > b2) b2 = g50.p; return b2 + (S().swimmers[c.i][3] ? Math.min(refYear() - S().swimmers[c.i][3], 45) * 0.01 : 0); };
+      resX.fill = avail.filter(c => !resX.team.has(c.i)).sort((a,b) => scoreFill(b) - scoreFill(a)).slice(0, preset.size - resX.team.size).map(c => c.i);
+      resX.fill.forEach(i => resX.team.add(i));
+    };
+    const blockHtml = (res, num) => {
+      let x = "";
+      x += `<h3 style="font-size:${num > 1 ? 15 : 14}px;margin:${num > 1 ? 26 : 14}px 0 6px;${num > 1 ? "border-top:2px solid var(--accent);padding-top:16px" : ""}">${num ? "Équipe " + num + " — courses individuelles" : "Courses individuelles"} — <span style="color:var(--accent)">${Math.round(res.total)} points</span> · ${res.team.size} nageur(s)</h3>
       <table><thead><tr><th>Épreuve</th><th>Nageur</th><th>Année</th><th>Points</th><th>Temps</th></tr></thead><tbody>`;
       res.assign.sort((a,b) => a.ei - b.ei).forEach(a => {
         const ev = res.events[a.ei], w = s.swimmers[a.sw];
         const g = poolGet(preset.oneEach ? poolU : pool, a.sw, ev.d, ev.st);
         const estTag = g && g.est ? ' <span class="tag" title="valeur estimée (module 🎯)">est.</span>' : "";
-        h += `<tr data-sw="${a.sw}"><td>${ev.d} m ${STROKES[ev.st]}</td><td class="name">${swName(a.sw)}</td><td>${w[3]}</td><td class="pts">${a.pts < 1 ? "—" : a.pts}${estTag}</td><td class="time">${g && g.t ? fmtTime(g.t) : "—"}</td></tr>`; });
-      h += `</tbody></table>`;
+        x += `<tr data-sw="${a.sw}"><td>${ev.d} m ${STROKES[ev.st]}</td><td class="name">${swName(a.sw)}</td><td>${w[3]}</td><td class="pts">${a.pts < 1 ? "—" : a.pts}${estTag}</td><td class="time">${g && g.t ? fmtTime(g.t) : "—"}</td></tr>`; });
+      x += `</tbody></table>`;
       if (preset.oneEach) {
         const covered = new Set(res.assign.map(a => a.ei));
         const imp = res.events.map((ev, i) => covered.has(i) ? null : ev.d + " m " + STROKES[ev.st]).filter(Boolean);
-        if (imp.length) h += `<p class="count" style="color:#b45309"><b>Épreuves sans nageur (impasse) :</b> ${imp.join(" · ")} — renseignez le module 🎯 ci-dessus pour les couvrir.</p>`;
-        if (res.fill && res.fill.length) h += `<p class="count"><b>Complément pour atteindre ${preset.size} :</b> ${res.fill.map(i => s.swimmers[i][0] + " " + s.swimmers[i][1]).join(" · ")} (relais / réserve, sans épreuve individuelle).</p>`;
+        if (imp.length) x += `<p class="count" style="color:#b45309"><b>Épreuves sans nageur (impasse) :</b> ${imp.join(" · ")} — renseignez le module 🎯 ci-dessus pour les couvrir.</p>`;
+        if (res.fill && res.fill.length) x += `<p class="count"><b>Complément pour atteindre ${preset.size} :</b> ${res.fill.map(i => s.swimmers[i][0] + " " + s.swimmers[i][1]).join(" · ")} (relais / réserve, sans épreuve individuelle).</p>`;
       }
       const teamCands = [...res.team].map(i => ({i, w: s.swimmers[i]}));
       preset.relays.forEach(r0 => {
         const cfg = {stroke: r0.stroke === "MEDLEY_IND" ? "MEDLEY" : r0.stroke, dist: r0.dist, legs: r0.legs, comp: tc2.sex};
         if (r0.stroke === "MEDLEY_IND") {
-          // relais 4x100 4N individuel : 4 meilleurs 100 4N
-          const list = teamCands.map(x => ({sw: x.i, t: (poolGet(preset.oneEach ? poolU : pool, x.i, r0.dist, 4) || {}).t})).filter(x => x.t).sort((a,b) => a.t - b.t).slice(0, r0.legs);
+          const list = teamCands.map(x2 => ({sw: x2.i, t: (poolGet(preset.oneEach ? poolU : pool, x2.i, r0.dist, 4) || {}).t})).filter(x2 => x2.t).sort((a,b) => a.t - b.t).slice(0, r0.legs);
           if (list.length === r0.legs) {
-            h += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} 4 Nages (ind.) — <span style="color:var(--accent)">Σ ${fmtTime(list.reduce((a,x)=>a+x.t,0))}</span></h3><p class="count">${list.map(x => s.swimmers[x.sw][0] + " (" + fmtTime(x.t) + ")").join(" · ")}</p>`;
+            x += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} 4 Nages (ind.) — <span style="color:var(--accent)">Σ ${fmtTime(list.reduce((a,x2)=>a+x2.t,0))}</span></h3><p class="count">${list.map(x2 => s.swimmers[x2.sw][0] + " (" + fmtTime(x2.t) + ")").join(" · ")}</p>`;
           }
           return;
         }
         if (r0.stroke === "FREE" && r0.legs >= preset.size) {
-          // relais "toute l'équipe" (ex. 10×50 NL) : chaque membre y participe, temps connus affichés
-          const list = teamCands.map(x => ({sw: x.i, t: (poolGet(preset.oneEach ? poolU : pool, x.i, r0.dist, 0) || {}).t})).filter(x => x.t).sort((a,b) => a.t - b.t);
+          const list = teamCands.map(x2 => ({sw: x2.i, t: (poolGet(preset.oneEach ? poolU : pool, x2.i, r0.dist, 0) || {}).t})).filter(x2 => x2.t).sort((a,b) => a.t - b.t);
           if (list.length) {
-            h += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} NL (toute l'équipe) — <span style="color:var(--accent)">Σ ${fmtTime(list.reduce((a,x) => a + x.t, 0))}</span>${list.length < r0.legs ? ` <span class="tag">${list.length}/${r0.legs} temps connus</span>` : ""}</h3>
-            <p class="count">${list.map(x => s.swimmers[x.sw][0] + " (" + fmtTime(x.t) + ")").join(" · ")}</p>`;
+            x += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} NL (toute l'équipe) — <span style="color:var(--accent)">Σ ${fmtTime(list.reduce((a,x2) => a + x2.t, 0))}</span>${list.length < r0.legs ? ` <span class="tag">${list.length}/${r0.legs} temps connus</span>` : ""}</h3>
+            <p class="count">${list.map(x2 => s.swimmers[x2.sw][0] + " (" + fmtTime(x2.t) + ")").join(" · ")}</p>`;
           }
           return;
         }
         const t = bestRelay(preset.oneEach ? poolU : pool, teamCands, cfg, null);
         if (t) {
-          h += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} ${r0.stroke==="FREE"?"NL":"4 Nages"} (avec l'équipe) — <span style="color:var(--accent)">Σ ${fmtTime(t.total)}</span></h3>
+          x += `<h3 style="font-size:14px;margin:14px 0 6px">Relais ${r0.legs}×${r0.dist} ${r0.stroke==="FREE"?"NL":"4 Nages"} (avec l'équipe) — <span style="color:var(--accent)">Σ ${fmtTime(t.total)}</span></h3>
           <p class="count">${t.legs.map(l => s.swimmers[l.sw][0] + " — " + STROKES[l.stroke] + " (" + fmtTime(l.time) + ")").join(" · ")}</p>`;
         }
       });
       if (res.rel) {
-        h += `<h3 style="font-size:14.5px;margin:16px 0 4px">🏆 Total équipe ≈ <span style="color:var(--accent)">${Math.round(res.grand)} pts</span> — individuel ${Math.round(res.total)} + relais ≈ ${res.rel.tot}</h3>
+        x += `<h3 style="font-size:14.5px;margin:16px 0 4px">🏆 Total ${num ? "équipe " + num : "équipe"} ≈ <span style="color:var(--accent)">${Math.round(res.grand)} pts</span> — individuel ${Math.round(res.total)} + relais ≈ ${res.rel.tot}</h3>
         <p class="count">${res.rel.det.map(d => d.lab + " : " + (d.cs ? "≈ " + d.p + " pts (Σ " + fmtTime(d.cs) + (d.est ? ", temps manquants estimés" : "") + ")" : "incomplet — 0 pt")).join(" · ")} — points des relais interpolés d'après la table FFN relevée aux Interclubs 2025.</p>`;
       }
-      h += `<p class="count" style="margin-top:10px">${preset.oneEach ? `Règlement : équipe de ${preset.size} nageurs, chacun nage exactement 1 épreuve individuelle (affectation optimale aux points) + le relais 10×50 NL ; relais composés avec l'équipe retenue.` : `Objectifs : points individuels maximisés (max ${preset.maxRaces} courses/nageur, ${preset.size} nageurs), relais au chrono minimal composés avec l'équipe retenue.`} Ajustez le vivier avec les filtres généraux (clubs, années, catégories…).</p>`;
+      return x;
+    };
+    if (preset.oneEach) {
+      let avail = cands.slice(), num = 0, blocks = "";
+      while (avail.length >= preset.size && num < 6) {
+        const res = state.tcGlobal ? bestTeamGlobal(poolU, avail, preset, tc2.sex)
+                                   : (r => { r.rel = tcRelaysPts(poolU, [...r.team], tc2.sex); r.grand = r.total + r.rel.tot; return r; })(bestTeamOneEach(poolU, avail, preset));
+        fillTeam(res, avail);
+        res.rel = tcRelaysPts(poolU, [...res.team], tc2.sex);
+        res.grand = res.total + res.rel.tot;
+        if (!res.team.size) break;
+        if (num >= 1 && Math.round(res.grand) < 1) break; // équipes suivantes sans aucun point réel : on s'arrête
+        num++;
+        blocks += blockHtml(res, num);
+        avail = avail.filter(c => !res.team.has(c.i));
+      }
+      if (!num) h += `<div class="empty">Pas assez de nageurs pour une équipe de ${preset.size} (élargissez les filtres ou cochez plus de nageurs dans 🏊).</div>`;
+      else {
+        h += blocks;
+        if (avail.length) h += `<p class="count" style="margin-top:12px"><b>Non alignés (${avail.length}) :</b> ${avail.map(c => s.swimmers[c.i][0] + " " + s.swimmers[c.i][1]).join(" · ")}</p>`;
+        h += `<p class="count" style="margin-top:10px">Règlement : équipes de ${preset.size} nageurs, chacun nage exactement 1 épreuve individuelle (affectation optimale aux points) + le relais 10×50 NL ; dans chaque équipe, les relais 4×200 NL et 4×100 4N sont composés au plus rapide — donc au maximum de points, la table étant décroissante. L'Équipe 1 est la plus forte, les suivantes sont composées avec les nageurs restants. Ajustez le vivier avec les filtres généraux (clubs, années, catégories…) et le panneau 🏊.</p>`;
+      }
+    } else {
+      const res = bestTeam(pool, cands, preset);
+      if (!res.assign.length) h += `<div class="empty">Aucune affectation possible (élargissez les filtres).</div>`;
+      else h += blockHtml(res, 0) + `<p class="count" style="margin-top:10px">Objectifs : points individuels maximisés (max ${preset.maxRaces} courses/nageur, ${preset.size} nageurs), relais au chrono minimal composés avec l'équipe retenue. Ajustez le vivier avec les filtres généraux (clubs, années, catégories…).</p>`;
     }
   }
   document.getElementById("tableZone").innerHTML = h;
+
   document.querySelectorAll("#tableZone tr[data-sw]").forEach(tr => tr.onclick = () => openModal(+tr.dataset.sw));
 }
 window._tm = v => { state.teamMode = v; render(); };
